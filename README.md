@@ -1,4 +1,4 @@
-# Trip Split Expense — Group Trip Expense Splitter & Receipt Scanner
+# Dosti Pakki Expense Apna Apna — Group Trip Expense Splitter & Receipt Scanner
 
 A fast group trip expense manager with camera snapshot capture, AI receipt scanning (photos & PDFs), minimum-payment settlement calculation, and CSV spreadsheet export.
 

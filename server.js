@@ -493,7 +493,7 @@ if (require.main === module) {
   server.listen(PORT, '127.0.0.1', () => {
     const url = `http://127.0.0.1:${PORT}`;
     console.log('================================================================');
-    console.log('  Trip Split Expense — Group Trip Expense Splitter & OCR        ');
+    console.log('  Dosti Pakki Expense Apna Apna — Group Trip Expense Splitter   ');
     console.log(`  Running locally on: ${url}`);
     console.log('================================================================\n');
 
