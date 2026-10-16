@@ -86,8 +86,8 @@ function normalizeDate(rawDate) {
 }
 
 function defaultSeedTrips() {
-  const nowIso = new Date().toISOString();
-  const today = nowIso.split('T')[0];
+  const seedIso = '2025-01-01T00:00:00.000Z';
+  const today = new Date().toISOString().split('T')[0];
   const sampleId = 'trip-sample-cotswolds';
   return {
     [sampleId]: {
@@ -108,7 +108,7 @@ function defaultSeedTrips() {
           source: 'manual',
           receipt_name: null,
           receipt_data_url: null,
-          created_at: nowIso
+          created_at: seedIso
         },
         {
           id: 'exp-sample-2',
@@ -118,10 +118,10 @@ function defaultSeedTrips() {
           category: 'Food & Drink',
           date: today,
           shared_by: ['Anil', 'Priya', 'Sam', 'Maya'],
-          source: 'scanned',
+          source: 'manual',
           receipt_name: 'swan_pub_receipt.jpg',
           receipt_data_url: null,
-          created_at: nowIso
+          created_at: seedIso
         },
         {
           id: 'exp-sample-3',
@@ -134,12 +134,13 @@ function defaultSeedTrips() {
           source: 'manual',
           receipt_name: null,
           receipt_data_url: null,
-          created_at: nowIso
+          created_at: seedIso
         }
       ],
       payments: [],
-      created_at: nowIso,
-      updated_at: nowIso
+      user_modified: false,
+      created_at: seedIso,
+      updated_at: seedIso
     }
   };
 }
@@ -354,21 +355,25 @@ const server = http.createServer(async (req, res) => {
 
   if (reqUrl === '/api/trips' && req.method === 'GET') {
     const trips = getStoredTrips();
-    const summaries = Object.values(trips).map(t => {
+    const list = Object.values(trips).map(t => {
       const exps = Array.isArray(t.expenses) ? t.expenses : [];
       const total = exps.reduce((s, e) => s + (Number(e.amount) || 0), 0);
       return {
+        ...t,
         id: t.id,
         name: t.name || 'Untitled Trip',
         members: t.members || [],
         currency: t.currency || '£',
+        expenses: exps,
+        payments: Array.isArray(t.payments) ? t.payments : [],
         expense_count: exps.length,
         total_spent: Math.round(total * 100) / 100,
+        user_modified: Boolean(t.user_modified),
         created_at: t.created_at,
         updated_at: t.updated_at
       };
     }).sort((a, b) => (b.updated_at || '').localeCompare(a.updated_at || ''));
-    return sendJson(res, 200, { status: 'success', trips: summaries });
+    return sendJson(res, 200, { status: 'success', trips: list });
   }
 
   if (reqUrl === '/api/trips' && req.method === 'POST') {
@@ -387,9 +392,10 @@ const server = http.createServer(async (req, res) => {
         pin: String(body.pin || '0000').trim() || '0000',
         currency: String(body.currency || '£').trim() || '£',
         members,
-        expenses: [],
-        payments: [],
-        created_at: nowIso,
+        expenses: Array.isArray(body.expenses) ? body.expenses : [],
+        payments: Array.isArray(body.payments) ? body.payments : [],
+        user_modified: true,
+        created_at: body.created_at || nowIso,
         updated_at: nowIso
       };
       const trips = getStoredTrips();
@@ -417,10 +423,21 @@ const server = http.createServer(async (req, res) => {
     const body = await readJsonBody(req);
     const incoming = body.trip || {};
     incoming.id = tripId;
-    incoming.updated_at = new Date().toISOString();
+    incoming.user_modified = true;
+    incoming.updated_at = incoming.updated_at || new Date().toISOString();
     trips[tripId] = incoming;
     saveStoredTrips(trips);
     return sendJson(res, 200, { status: 'success', trip: incoming });
+  }
+
+  if (updateMatch && req.method === 'DELETE') {
+    const tripId = decodeURIComponent(updateMatch[1]);
+    const trips = getStoredTrips();
+    if (trips[tripId]) {
+      delete trips[tripId];
+      saveStoredTrips(trips);
+    }
+    return sendJson(res, 200, { status: 'success', deleted_id: tripId });
   }
 
   if (reqUrl === '/api/scan-receipts-json' && req.method === 'POST') {

@@ -78,8 +78,8 @@ def get_effective_api_key(client_key: Optional[str] = None) -> Optional[str]:
 
 
 def default_seed_trips() -> Dict[str, Any]:
-    """Provides a sample trip (PIN: 0000) so the home page immediately demonstrates PIN-protected trips."""
-    now_iso = datetime.datetime.now().isoformat()
+    """Provides a sample trip so the home page immediately demonstrates trip expense splitting."""
+    seed_iso = "2025-01-01T00:00:00.000Z"
     today_str = datetime.date.today().isoformat()
     sample_id = "trip-sample-cotswolds"
     return {
@@ -101,7 +101,7 @@ def default_seed_trips() -> Dict[str, Any]:
                     "source": "manual",
                     "receipt_name": None,
                     "receipt_data_url": None,
-                    "created_at": now_iso
+                    "created_at": seed_iso
                 },
                 {
                     "id": "exp-sample-2",
@@ -111,10 +111,10 @@ def default_seed_trips() -> Dict[str, Any]:
                     "category": "Food & Drink",
                     "date": today_str,
                     "shared_by": ["Anil", "Priya", "Sam", "Maya"],
-                    "source": "scanned",
+                    "source": "manual",
                     "receipt_name": "swan_pub_receipt.jpg",
                     "receipt_data_url": None,
-                    "created_at": now_iso
+                    "created_at": seed_iso
                 },
                 {
                     "id": "exp-sample-3",
@@ -127,12 +127,13 @@ def default_seed_trips() -> Dict[str, Any]:
                     "source": "manual",
                     "receipt_name": None,
                     "receipt_data_url": None,
-                    "created_at": now_iso
+                    "created_at": seed_iso
                 }
             ],
             "payments": [],
-            "created_at": now_iso,
-            "updated_at": now_iso
+            "user_modified": False,
+            "created_at": seed_iso,
+            "updated_at": seed_iso
         }
     }
 
@@ -173,6 +174,8 @@ class CreateTripRequest(BaseModel):
     members: List[str]
     pin: str = "0000"
     currency: str = "£"
+    expenses: Optional[List[Dict[str, Any]]] = None
+    payments: Optional[List[Dict[str, Any]]] = None
 
 
 class VerifyPinRequest(BaseModel):
@@ -199,29 +202,33 @@ def get_status(x_gemini_key: Optional[str] = Header(None)):
 
 @api_router.get("/trips")
 def list_trips():
-    """List all trips for the home page without exposing private expense details or raw PINs."""
+    """List all trips with full expenses and payments so client & server stay in sync."""
     trips = get_stored_trips()
-    summaries = []
+    result_list = []
     for tid, t in trips.items():
         expenses = t.get("expenses", [])
         total_spent = sum(float(e.get("amount", 0) or 0) for e in expenses)
-        summaries.append({
+        result_list.append({
+            **t,
             "id": tid,
             "name": t.get("name", "Untitled Trip"),
             "members": t.get("members", []),
             "currency": t.get("currency", "£"),
+            "expenses": expenses,
+            "payments": t.get("payments", []),
             "expense_count": len(expenses),
             "total_spent": round(total_spent, 2),
+            "user_modified": bool(t.get("user_modified", False)),
             "created_at": t.get("created_at"),
             "updated_at": t.get("updated_at")
         })
-    summaries.sort(key=lambda x: x.get("updated_at") or "", reverse=True)
-    return {"status": "success", "trips": summaries}
+    result_list.sort(key=lambda x: x.get("updated_at") or "", reverse=True)
+    return {"status": "success", "trips": result_list}
 
 
 @api_router.post("/trips")
 def create_trip(req: CreateTripRequest):
-    """Create a new trip with a name, member names, and a PIN (starts as 0000)."""
+    """Create a new trip with a name and member names."""
     name = (req.name or "").strip()
     if not name:
         raise HTTPException(status_code=400, detail="Trip name is required.")
@@ -247,8 +254,9 @@ def create_trip(req: CreateTripRequest):
         "pin": pin,
         "currency": (req.currency or "£").strip() or "£",
         "members": cleaned_members,
-        "expenses": [],
-        "payments": [],
+        "expenses": req.expenses if isinstance(req.expenses, list) else [],
+        "payments": req.payments if isinstance(req.payments, list) else [],
+        "user_modified": True,
         "created_at": now_iso,
         "updated_at": now_iso
     }
@@ -278,7 +286,8 @@ def update_trip(trip_id: str, req: SyncTripRequest):
     incoming = req.trip or {}
     now_iso = datetime.datetime.now().isoformat()
     incoming["id"] = trip_id
-    incoming["updated_at"] = now_iso
+    incoming["user_modified"] = True
+    incoming["updated_at"] = incoming.get("updated_at") or now_iso
     trips[trip_id] = incoming
     save_stored_trips(trips)
     return {"status": "success", "trip": incoming}
@@ -287,11 +296,9 @@ def update_trip(trip_id: str, req: SyncTripRequest):
 @api_router.delete("/trips/{trip_id}")
 def delete_trip(trip_id: str):
     trips = get_stored_trips()
-    existing = trips.get(trip_id)
-    if not existing:
-        raise HTTPException(status_code=404, detail="Trip not found.")
-    del trips[trip_id]
-    save_stored_trips(trips)
+    if trip_id in trips:
+        del trips[trip_id]
+        save_stored_trips(trips)
     return {"status": "success", "deleted_id": trip_id}
 
 

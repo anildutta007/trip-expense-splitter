@@ -12,7 +12,11 @@
  */
 
 const STORAGE_KEY_TRIPS = "tripsplit_ai_trips_v1";
+const STORAGE_KEY_ACTIVE_TRIP = "tripsplit_active_trip_id_v1";
+const STORAGE_KEY_DRAFT_TRIP = "tripsplit_draft_trip_v1";
 const STORAGE_KEY_GEMINI = "tripsplit_ai_gemini_key";
+const IDB_NAME = "DostiPakkiExpenseDB";
+const IDB_STORE = "trips_kv";
 
 const CATEGORY_META = {
   "Food & Drink": { icon: "ph-fork-knife", badge: "bg-orange-50 text-orange-700 border-orange-200" },
@@ -56,9 +60,38 @@ let yehDostiAutoUnlockBound = false;
 
 document.addEventListener("DOMContentLoaded", async () => {
   initDefaultDateInputs();
+  restoreDraftTripState();
+  bindDraftFormPersistence();
   renderDraftMembers();
   await loadAllTrips();
-  checkAiScannerStatus();
+
+  // Restore last open trip if the user closed the app while inside a trip
+  try {
+    const lastActiveId = localStorage.getItem(STORAGE_KEY_ACTIVE_TRIP);
+    if (lastActiveId && allTripsMap[lastActiveId]) {
+      await openTrip(lastActiveId);
+    }
+  } catch (_) {}
+
+  // Flush state before tab/window closes or hides
+  window.addEventListener("beforeunload", () => {
+    saveDraftTripState();
+    if (activeTrip && activeTrip.id) {
+      allTripsMap[activeTrip.id] = activeTrip;
+    }
+    saveLocalTripsMap(allTripsMap);
+  });
+
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") {
+      saveDraftTripState();
+      if (activeTrip && activeTrip.id) {
+        allTripsMap[activeTrip.id] = activeTrip;
+      }
+      saveLocalTripsMap(allTripsMap);
+    }
+  });
+
   // Play "Yeh Dosti Hum Nahi Todenge" (20s) by default when visiting the website
   autoPlayYehDostiOnVisit();
 });
@@ -266,23 +299,57 @@ function startYehDostiSynthMelody(durationSec) {
   } catch (_) {}
 }
 
-// ----------------- LOCAL & SERVER STORAGE -----------------
+// ----------------- LOCAL, INDEXEDDB & SERVER STORAGE -----------------
 
-function getLocalTripsMap() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY_TRIPS);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (parsed && typeof parsed === "object" && Object.keys(parsed).length > 0) {
-        return parsed;
-      }
+function openTripsIdb() {
+  return new Promise((resolve) => {
+    if (!window.indexedDB) return resolve(null);
+    try {
+      const req = window.indexedDB.open(IDB_NAME, 1);
+      req.onupgradeneeded = (e) => {
+        const db = e.target.result;
+        if (!db.objectStoreNames.contains(IDB_STORE)) {
+          db.createObjectStore(IDB_STORE);
+        }
+      };
+      req.onsuccess = (e) => resolve(e.target.result);
+      req.onerror = () => resolve(null);
+    } catch (_) {
+      resolve(null);
     }
-  } catch (e) {
-    console.warn("Could not read localStorage trips:", e);
-  }
+  });
+}
+
+async function readTripsFromIdb() {
+  const db = await openTripsIdb();
+  if (!db) return null;
+  return new Promise((resolve) => {
+    try {
+      const tx = db.transaction(IDB_STORE, "readonly");
+      const store = tx.objectStore(IDB_STORE);
+      const getReq = store.get(STORAGE_KEY_TRIPS);
+      getReq.onsuccess = () => resolve(getReq.result || null);
+      getReq.onerror = () => resolve(null);
+    } catch (_) {
+      resolve(null);
+    }
+  });
+}
+
+async function writeTripsToIdb(map) {
+  const db = await openTripsIdb();
+  if (!db) return;
+  try {
+    const tx = db.transaction(IDB_STORE, "readwrite");
+    const store = tx.objectStore(IDB_STORE);
+    store.put(map, STORAGE_KEY_TRIPS);
+  } catch (_) {}
+}
+
+function createDefaultSampleTripsMap() {
   const today = new Date().toISOString().split("T")[0];
-  const nowIso = new Date().toISOString();
-  const sample = {
+  const seedIso = "2025-01-01T00:00:00.000Z";
+  return {
     "trip-sample-cotswolds": {
       id: "trip-sample-cotswolds",
       name: "Cotswolds Weekend Getaway",
@@ -300,7 +367,7 @@ function getLocalTripsMap() {
           source: "manual",
           receipt_name: null,
           receipt_data_url: null,
-          created_at: nowIso
+          created_at: seedIso
         },
         {
           id: "exp-sample-2",
@@ -310,10 +377,10 @@ function getLocalTripsMap() {
           category: "Food & Drink",
           date: today,
           shared_by: ["Anil", "Priya", "Sam", "Maya"],
-          source: "scanned",
+          source: "manual",
           receipt_name: "swan_pub_receipt.jpg",
           receipt_data_url: null,
-          created_at: nowIso
+          created_at: seedIso
         },
         {
           id: "exp-sample-3",
@@ -326,58 +393,156 @@ function getLocalTripsMap() {
           source: "manual",
           receipt_name: null,
           receipt_data_url: null,
-          created_at: nowIso
+          created_at: seedIso
         }
       ],
       payments: [],
-      created_at: nowIso,
-      updated_at: nowIso
+      user_modified: false,
+      created_at: seedIso,
+      updated_at: seedIso
     }
   };
-  saveLocalTripsMap(sample);
-  return sample;
+}
+
+function getLocalTripsMap() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_TRIPS);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === "object" && Object.keys(parsed).length > 0) {
+        return parsed;
+      }
+    }
+  } catch (e) {
+    console.warn("Could not read localStorage trips:", e);
+  }
+  return null;
 }
 
 function saveLocalTripsMap(map) {
+  if (!map || typeof map !== "object") return;
+  // Save full map (including high-res receipt photos) to IndexedDB
+  writeTripsToIdb(map);
+
+  // Save to localStorage with automatic fallback if photos exceed 5MB quota
   try {
     localStorage.setItem(STORAGE_KEY_TRIPS, JSON.stringify(map));
   } catch (e) {
-    console.warn("localStorage quota or write error:", e);
+    console.warn("localStorage quota exceeded, saving photo-trimmed copy to localStorage:", e);
+    try {
+      const lightMap = {};
+      for (const [tid, t] of Object.entries(map)) {
+        lightMap[tid] = {
+          ...t,
+          expenses: Array.isArray(t.expenses)
+            ? t.expenses.map(exp => ({ ...exp, receipt_data_url: null }))
+            : []
+        };
+      }
+      localStorage.setItem(STORAGE_KEY_TRIPS, JSON.stringify(lightMap));
+    } catch (e2) {
+      console.warn("localStorage fallback write failed:", e2);
+    }
   }
 }
 
+function chooseNewerTrip(localTrip, serverTrip) {
+  if (!localTrip) return serverTrip;
+  if (!serverTrip) return localTrip;
+
+  // Never let an unmodified server seed trip overwrite a user-modified local trip
+  if (localTrip.user_modified && !serverTrip.user_modified) {
+    return localTrip;
+  }
+  if (serverTrip.user_modified && !localTrip.user_modified) {
+    return serverTrip;
+  }
+
+  const localTime = Date.parse(localTrip.updated_at || "") || 0;
+  const serverTime = Date.parse(serverTrip.updated_at || "") || 0;
+
+  if (localTime >= serverTime) {
+    return localTrip;
+  }
+  return serverTrip;
+}
+
 async function loadAllTrips() {
-  allTripsMap = getLocalTripsMap();
+  const lsMap = getLocalTripsMap();
+  const idbMap = await readTripsFromIdb();
+
+  // Merge localStorage and IndexedDB maps, picking the newer version of each trip
+  const mergedLocal = {};
+  if (lsMap && typeof lsMap === "object") {
+    for (const [tid, t] of Object.entries(lsMap)) {
+      mergedLocal[tid] = t;
+    }
+  }
+  if (idbMap && typeof idbMap === "object") {
+    for (const [tid, t] of Object.entries(idbMap)) {
+      mergedLocal[tid] = chooseNewerTrip(mergedLocal[tid], t);
+    }
+  }
+
+  allTripsMap = Object.keys(mergedLocal).length > 0 ? mergedLocal : createDefaultSampleTripsMap();
+
   try {
     const res = await fetch("/api/trips");
     if (res.ok) {
       const data = await res.json();
       if (data && Array.isArray(data.trips)) {
-        for (const summary of data.trips) {
-          if (!allTripsMap[summary.id]) {
-            allTripsMap[summary.id] = {
-              id: summary.id,
-              name: summary.name,
-              currency: summary.currency || "£",
-              members: summary.members || [],
-              expenses: [],
-              payments: [],
-              expense_count_hint: summary.expense_count,
-              total_spent_hint: summary.total_spent,
-              created_at: summary.created_at,
-              updated_at: summary.updated_at
-            };
+        const serverIds = new Set();
+        for (const sTrip of data.trips) {
+          serverIds.add(sTrip.id);
+          const fullServerTrip = {
+            id: sTrip.id,
+            name: sTrip.name,
+            currency: sTrip.currency || "£",
+            members: Array.isArray(sTrip.members) ? sTrip.members : [],
+            expenses: Array.isArray(sTrip.expenses) ? sTrip.expenses : [],
+            payments: Array.isArray(sTrip.payments) ? sTrip.payments : [],
+            expense_count_hint: sTrip.expense_count,
+            total_spent_hint: sTrip.total_spent,
+            user_modified: Boolean(sTrip.user_modified),
+            created_at: sTrip.created_at,
+            updated_at: sTrip.updated_at
+          };
+
+          const existingLocal = allTripsMap[sTrip.id];
+          const chosen = chooseNewerTrip(existingLocal, fullServerTrip);
+          allTripsMap[sTrip.id] = chosen;
+
+          // If our local version is newer than the server's, push it back to the server
+          if (existingLocal && chosen === existingLocal && existingLocal.user_modified) {
+            fetch(`/api/trips/${encodeURIComponent(sTrip.id)}`, {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ trip: existingLocal })
+            }).catch(() => {});
           }
         }
-        saveLocalTripsMap(allTripsMap);
+
+        // Push any locally created trips that the server doesn't know about yet
+        for (const [tid, lTrip] of Object.entries(allTripsMap)) {
+          if (!serverIds.has(tid)) {
+            fetch(`/api/trips/${encodeURIComponent(tid)}`, {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ trip: lTrip })
+            }).catch(() => {});
+          }
+        }
       }
     }
   } catch (_) {}
+
+  saveLocalTripsMap(allTripsMap);
   renderHomeTripsList();
 }
 
 async function syncTripToServer(tripObj) {
   tripObj.updated_at = new Date().toISOString();
+  tripObj.user_modified = true;
   allTripsMap[tripObj.id] = tripObj;
   saveLocalTripsMap(allTripsMap);
   try {
@@ -387,6 +552,59 @@ async function syncTripToServer(tripObj) {
       body: JSON.stringify({ trip: tripObj })
     });
   } catch (_) {}
+}
+
+// ----------------- DRAFT TRIP FORM PERSISTENCE -----------------
+
+function saveDraftTripState() {
+  try {
+    const nameInput = document.getElementById("tripNameInput");
+    const currencyInput = document.getElementById("tripCurrencyInput");
+    const memberInput = document.getElementById("memberNameInput");
+    const draftPayload = {
+      name: nameInput ? nameInput.value : "",
+      currency: currencyInput ? currencyInput.value : "£",
+      pendingMemberText: memberInput ? memberInput.value : "",
+      members: Array.isArray(draftMembers) ? draftMembers : []
+    };
+    localStorage.setItem(STORAGE_KEY_DRAFT_TRIP, JSON.stringify(draftPayload));
+  } catch (_) {}
+}
+
+function restoreDraftTripState() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_DRAFT_TRIP);
+    if (!raw) return;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return;
+
+    const nameInput = document.getElementById("tripNameInput");
+    const currencyInput = document.getElementById("tripCurrencyInput");
+    const memberInput = document.getElementById("memberNameInput");
+
+    if (nameInput && typeof parsed.name === "string") {
+      nameInput.value = parsed.name;
+    }
+    if (currencyInput && typeof parsed.currency === "string" && parsed.currency) {
+      currencyInput.value = parsed.currency;
+    }
+    if (memberInput && typeof parsed.pendingMemberText === "string") {
+      memberInput.value = parsed.pendingMemberText;
+    }
+    if (Array.isArray(parsed.members)) {
+      draftMembers = parsed.members;
+    }
+  } catch (_) {}
+}
+
+function bindDraftFormPersistence() {
+  ["tripNameInput", "tripCurrencyInput", "memberNameInput"].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) {
+      el.addEventListener("input", saveDraftTripState);
+      el.addEventListener("change", saveDraftTripState);
+    }
+  });
 }
 
 // ----------------- 1. CREATE A TRIP & HOME PAGE LIST -----------------
@@ -414,6 +632,7 @@ function addDraftMemberFromInput() {
     }
   }
   input.value = "";
+  saveDraftTripState();
   if (added > 0) {
     renderDraftMembers();
   }
@@ -421,6 +640,7 @@ function addDraftMemberFromInput() {
 
 function removeDraftMember(index) {
   draftMembers.splice(index, 1);
+  saveDraftTripState();
   renderDraftMembers();
 }
 
@@ -474,6 +694,7 @@ async function handleCreateTrip(event) {
     members: [...draftMembers],
     expenses: [],
     payments: [],
+    user_modified: true,
     created_at: nowIso,
     updated_at: nowIso
   };
@@ -492,7 +713,7 @@ async function handleCreateTrip(event) {
     if (res.ok) {
       const data = await res.json();
       if (data && data.trip) {
-        createdTrip = data.trip;
+        createdTrip = { ...data.trip, user_modified: true };
       }
     }
   } catch (_) {}
@@ -502,12 +723,14 @@ async function handleCreateTrip(event) {
 
   nameInput.value = "";
   draftMembers = [];
+  saveDraftTripState();
   renderDraftMembers();
   renderHomeTripsList();
 
-  // Play 20 seconds of "Yeh Dosti Hum Nahi Todenge" to celebrate creating the trip!
+  // Open the newly created trip immediately and play 20s "Yeh Dosti" song!
+  await openTrip(createdTrip.id);
   playYehDostiMusic();
-  showToast(`Trip "${createdTrip.name}" created! Playing "Yeh Dosti" (20s)!`, "success");
+  showToast(`Trip "${createdTrip.name}" created & saved! Playing "Yeh Dosti" (20s)!`, "success");
 }
 
 function renderHomeTripsList() {
@@ -597,12 +820,17 @@ async function openTrip(tripId) {
     if (res.ok) {
       const data = await res.json();
       if (data && data.trip) {
-        if (localTrip && Array.isArray(localTrip.expenses) && localTrip.expenses.length >= (data.trip.expenses || []).length) {
-          allTripsMap[tripId] = localTrip;
-        } else {
-          allTripsMap[tripId] = data.trip;
-        }
+        const chosen = chooseNewerTrip(localTrip, data.trip);
+        allTripsMap[tripId] = chosen;
         saveLocalTripsMap(allTripsMap);
+
+        if (localTrip && chosen === localTrip && localTrip.user_modified) {
+          fetch(`/api/trips/${encodeURIComponent(tripId)}`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ trip: localTrip })
+          }).catch(() => {});
+        }
       }
     }
   } catch (_) {}
@@ -611,6 +839,10 @@ async function openTrip(tripId) {
   if (!tripObj) return;
 
   activeTrip = tripObj;
+  try {
+    localStorage.setItem(STORAGE_KEY_ACTIVE_TRIP, tripId);
+  } catch (_) {}
+
   document.getElementById("homeView").classList.add("hidden");
   document.getElementById("tripView").classList.remove("hidden");
   document.getElementById("headerBackHomeBtn").classList.remove("hidden");
@@ -622,6 +854,9 @@ async function openTrip(tripId) {
 
 function goHome() {
   activeTrip = null;
+  try {
+    localStorage.removeItem(STORAGE_KEY_ACTIVE_TRIP);
+  } catch (_) {}
   document.getElementById("tripView").classList.add("hidden");
   document.getElementById("homeView").classList.remove("hidden");
   document.getElementById("headerBackHomeBtn").classList.add("hidden");
