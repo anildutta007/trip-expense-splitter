@@ -56,6 +56,7 @@ app.add_middleware(
 api_router = APIRouter()
 
 DATA_FILE = BASE_DIR / "data" / "trips.json"
+TMP_DATA_FILE = Path("/tmp/trips.json")
 _in_memory_trips: Dict[str, Any] = {}
 
 VALID_CATEGORIES = [
@@ -78,11 +79,30 @@ def get_effective_api_key(client_key: Optional[str] = None) -> Optional[str]:
 
 
 def default_seed_trips() -> Dict[str, Any]:
-    """Provides a sample trip so the home page immediately demonstrates trip expense splitting."""
+    """Provides default trips including Sholay Trip and Cotswolds Weekend Getaway."""
     seed_iso = "2025-01-01T00:00:00.000Z"
+    sholay_created = "2026-10-16T11:43:06.890334"
+    sholay_updated = "2026-10-16T12:10:00.054Z"
     today_str = datetime.date.today().isoformat()
     sample_id = "trip-sample-cotswolds"
+    sholay_id = "trip-mvawfb6j-xahn"
     return {
+        sholay_id: {
+            "id": sholay_id,
+            "name": "Sholay Trip",
+            "pin": "0000",
+            "currency": "£",
+            "members": [
+                "Rahul", "Pooja", "Rekha", "Anil", "Robin", "Rumi",
+                "Naveen", "Sonal", "Pawan", "Shobha", "Pankaj", "Ritu",
+                "Guddi", "Vipul", "Preeti", "Snehal"
+            ],
+            "expenses": [],
+            "payments": [],
+            "user_modified": False,
+            "created_at": sholay_created,
+            "updated_at": sholay_updated
+        },
         sample_id: {
             "id": sample_id,
             "name": "Cotswolds Weekend Getaway",
@@ -141,29 +161,42 @@ def default_seed_trips() -> Dict[str, Any]:
 def get_stored_trips() -> Dict[str, Any]:
     global _in_memory_trips
     if not _in_memory_trips:
-        try:
-            if DATA_FILE.exists():
-                with open(DATA_FILE, "r", encoding="utf-8") as f:
-                    loaded = json.load(f)
-                    if isinstance(loaded, dict):
-                        _in_memory_trips = loaded
-        except Exception as e:
-            print("Failed reading trips file:", e)
-        if not _in_memory_trips:
-            _in_memory_trips = default_seed_trips()
-            save_stored_trips(_in_memory_trips)
+        seed = default_seed_trips()
+        merged = dict(seed)
+        for candidate in [DATA_FILE, TMP_DATA_FILE]:
+            try:
+                if candidate.exists():
+                    with open(candidate, "r", encoding="utf-8") as f:
+                        loaded = json.load(f)
+                        if isinstance(loaded, dict):
+                            for k, v in loaded.items():
+                                merged[k] = v
+            except Exception as e:
+                print(f"Failed reading trips file {candidate}:", e)
+        _in_memory_trips = merged
+        save_stored_trips(_in_memory_trips)
     return _in_memory_trips
 
 
 def save_stored_trips(trips: Dict[str, Any]):
     global _in_memory_trips
     _in_memory_trips = trips
+    wrote = False
     try:
         DATA_FILE.parent.mkdir(parents=True, exist_ok=True)
         with open(DATA_FILE, "w", encoding="utf-8") as f:
             json.dump(trips, f, indent=2)
+        wrote = True
+    except Exception:
+        pass
+    try:
+        TMP_DATA_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(TMP_DATA_FILE, "w", encoding="utf-8") as f:
+            json.dump(trips, f, indent=2)
+        wrote = True
     except Exception as e:
-        print("Disk write skipped or failed (serverless environment):", e)
+        if not wrote:
+            print("Disk write skipped or failed (serverless environment):", e)
 
 
 # ----------------- Pydantic Models -----------------

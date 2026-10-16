@@ -87,9 +87,28 @@ function normalizeDate(rawDate) {
 
 function defaultSeedTrips() {
   const seedIso = '2025-01-01T00:00:00.000Z';
+  const sholayCreated = '2026-10-16T11:43:06.890334';
+  const sholayUpdated = '2026-10-16T12:10:00.054Z';
   const today = new Date().toISOString().split('T')[0];
   const sampleId = 'trip-sample-cotswolds';
+  const sholayId = 'trip-mvawfb6j-xahn';
   return {
+    [sholayId]: {
+      id: sholayId,
+      name: 'Sholay Trip',
+      pin: '0000',
+      currency: '£',
+      members: [
+        'Rahul', 'Pooja', 'Rekha', 'Anil', 'Robin', 'Rumi',
+        'Naveen', 'Sonal', 'Pawan', 'Shobha', 'Pankaj', 'Ritu',
+        'Guddi', 'Vipul', 'Preeti', 'Snehal'
+      ],
+      expenses: [],
+      payments: [],
+      user_modified: false,
+      created_at: sholayCreated,
+      updated_at: sholayUpdated
+    },
     [sampleId]: {
       id: sampleId,
       name: 'Cotswolds Weekend Getaway',
@@ -149,19 +168,21 @@ let inMemoryTrips = null;
 
 function getStoredTrips() {
   if (!inMemoryTrips) {
+    const seed = defaultSeedTrips();
+    const merged = { ...seed };
     try {
       if (fs.existsSync(TRIPS_FILE)) {
         const raw = fs.readFileSync(TRIPS_FILE, 'utf8');
         const parsed = JSON.parse(raw);
-        if (parsed && typeof parsed === 'object' && Object.keys(parsed).length > 0) {
-          inMemoryTrips = parsed;
+        if (parsed && typeof parsed === 'object') {
+          for (const [k, v] of Object.entries(parsed)) {
+            merged[k] = v;
+          }
         }
       }
     } catch (_) {}
-    if (!inMemoryTrips) {
-      inMemoryTrips = defaultSeedTrips();
-      saveStoredTrips(inMemoryTrips);
-    }
+    inMemoryTrips = merged;
+    saveStoredTrips(inMemoryTrips);
   }
   return inMemoryTrips;
 }
@@ -196,6 +217,7 @@ function sendJson(res, status, payload) {
   res.writeHead(status, {
     'Content-Type': 'application/json; charset=utf-8',
     'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Private-Network': 'true',
     'Cache-Control': 'no-cache'
   });
   res.end(JSON.stringify(payload));
@@ -333,6 +355,7 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'OPTIONS') {
     res.writeHead(204, {
       'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Private-Network': 'true',
       'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
       'Access-Control-Allow-Headers': 'Content-Type, x-gemini-key'
     });
@@ -507,6 +530,7 @@ const server = http.createServer(async (req, res) => {
 });
 
 if (require.main === module) {
+  getStoredTrips();
   server.listen(PORT, '127.0.0.1', () => {
     const url = `http://127.0.0.1:${PORT}`;
     console.log('================================================================');

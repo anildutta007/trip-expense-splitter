@@ -346,10 +346,35 @@ async function writeTripsToIdb(map) {
   } catch (_) {}
 }
 
+function getApiBases() {
+  const bases = [""];
+  if (typeof window !== "undefined" && window.location && window.location.origin !== "http://127.0.0.1:8080") {
+    bases.push("http://127.0.0.1:8080");
+  }
+  return bases;
+}
+
 function createDefaultSampleTripsMap() {
   const today = new Date().toISOString().split("T")[0];
   const seedIso = "2025-01-01T00:00:00.000Z";
+  const sholayCreated = "2026-10-16T11:43:06.890334";
+  const sholayUpdated = "2026-10-16T12:10:00.054Z";
   return {
+    "trip-mvawfb6j-xahn": {
+      id: "trip-mvawfb6j-xahn",
+      name: "Sholay Trip",
+      currency: "£",
+      members: [
+        "Rahul", "Pooja", "Rekha", "Anil", "Robin", "Rumi",
+        "Naveen", "Sonal", "Pawan", "Shobha", "Pankaj", "Ritu",
+        "Guddi", "Vipul", "Preeti", "Snehal"
+      ],
+      expenses: [],
+      payments: [],
+      user_modified: false,
+      created_at: sholayCreated,
+      updated_at: sholayUpdated
+    },
     "trip-sample-cotswolds": {
       id: "trip-sample-cotswolds",
       name: "Cotswolds Weekend Getaway",
@@ -471,11 +496,11 @@ async function loadAllTrips() {
   const lsMap = getLocalTripsMap();
   const idbMap = await readTripsFromIdb();
 
-  // Merge localStorage and IndexedDB maps, picking the newer version of each trip
-  const mergedLocal = {};
+  // Start with default trips (including Sholay Trip) so every browser has them
+  const mergedLocal = { ...createDefaultSampleTripsMap() };
   if (lsMap && typeof lsMap === "object") {
     for (const [tid, t] of Object.entries(lsMap)) {
-      mergedLocal[tid] = t;
+      mergedLocal[tid] = chooseNewerTrip(mergedLocal[tid], t);
     }
   }
   if (idbMap && typeof idbMap === "object") {
@@ -484,57 +509,59 @@ async function loadAllTrips() {
     }
   }
 
-  allTripsMap = Object.keys(mergedLocal).length > 0 ? mergedLocal : createDefaultSampleTripsMap();
+  allTripsMap = mergedLocal;
 
-  try {
-    const res = await fetch("/api/trips");
-    if (res.ok) {
-      const data = await res.json();
-      if (data && Array.isArray(data.trips)) {
-        const serverIds = new Set();
-        for (const sTrip of data.trips) {
-          serverIds.add(sTrip.id);
-          const fullServerTrip = {
-            id: sTrip.id,
-            name: sTrip.name,
-            currency: sTrip.currency || "£",
-            members: Array.isArray(sTrip.members) ? sTrip.members : [],
-            expenses: Array.isArray(sTrip.expenses) ? sTrip.expenses : [],
-            payments: Array.isArray(sTrip.payments) ? sTrip.payments : [],
-            expense_count_hint: sTrip.expense_count,
-            total_spent_hint: sTrip.total_spent,
-            user_modified: Boolean(sTrip.user_modified),
-            created_at: sTrip.created_at,
-            updated_at: sTrip.updated_at
-          };
+  for (const base of getApiBases()) {
+    try {
+      const res = await fetch(`${base}/api/trips`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data && Array.isArray(data.trips)) {
+          const serverIds = new Set();
+          for (const sTrip of data.trips) {
+            serverIds.add(sTrip.id);
+            const fullServerTrip = {
+              id: sTrip.id,
+              name: sTrip.name,
+              currency: sTrip.currency || "£",
+              members: Array.isArray(sTrip.members) ? sTrip.members : [],
+              expenses: Array.isArray(sTrip.expenses) ? sTrip.expenses : [],
+              payments: Array.isArray(sTrip.payments) ? sTrip.payments : [],
+              expense_count_hint: sTrip.expense_count,
+              total_spent_hint: sTrip.total_spent,
+              user_modified: Boolean(sTrip.user_modified),
+              created_at: sTrip.created_at,
+              updated_at: sTrip.updated_at
+            };
 
-          const existingLocal = allTripsMap[sTrip.id];
-          const chosen = chooseNewerTrip(existingLocal, fullServerTrip);
-          allTripsMap[sTrip.id] = chosen;
+            const existingLocal = allTripsMap[sTrip.id];
+            const chosen = chooseNewerTrip(existingLocal, fullServerTrip);
+            allTripsMap[sTrip.id] = chosen;
 
-          // If our local version is newer than the server's, push it back to the server
-          if (existingLocal && chosen === existingLocal && existingLocal.user_modified) {
-            fetch(`/api/trips/${encodeURIComponent(sTrip.id)}`, {
-              method: "PUT",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ trip: existingLocal })
-            }).catch(() => {});
+            // If our local version is newer than the server's, push it back to the server
+            if (existingLocal && chosen === existingLocal && existingLocal.user_modified) {
+              fetch(`${base}/api/trips/${encodeURIComponent(sTrip.id)}`, {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ trip: existingLocal })
+              }).catch(() => {});
+            }
           }
-        }
 
-        // Push any locally created trips that the server doesn't know about yet
-        for (const [tid, lTrip] of Object.entries(allTripsMap)) {
-          if (!serverIds.has(tid)) {
-            fetch(`/api/trips/${encodeURIComponent(tid)}`, {
-              method: "PUT",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ trip: lTrip })
-            }).catch(() => {});
+          // Push any locally created trips that this server doesn't know about yet
+          for (const [tid, lTrip] of Object.entries(allTripsMap)) {
+            if (!serverIds.has(tid)) {
+              fetch(`${base}/api/trips/${encodeURIComponent(tid)}`, {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ trip: lTrip })
+              }).catch(() => {});
+            }
           }
         }
       }
-    }
-  } catch (_) {}
+    } catch (_) {}
+  }
 
   saveLocalTripsMap(allTripsMap);
   renderHomeTripsList();
@@ -545,13 +572,15 @@ async function syncTripToServer(tripObj) {
   tripObj.user_modified = true;
   allTripsMap[tripObj.id] = tripObj;
   saveLocalTripsMap(allTripsMap);
-  try {
-    await fetch(`/api/trips/${encodeURIComponent(tripObj.id)}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ trip: tripObj })
-    });
-  } catch (_) {}
+  for (const base of getApiBases()) {
+    try {
+      await fetch(`${base}/api/trips/${encodeURIComponent(tripObj.id)}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ trip: tripObj })
+      });
+    } catch (_) {}
+  }
 }
 
 // ----------------- DRAFT TRIP FORM PERSISTENCE -----------------
@@ -699,24 +728,26 @@ async function handleCreateTrip(event) {
     updated_at: nowIso
   };
 
-  try {
-    const res = await fetch("/api/trips", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        id: newTripId,
-        name: tripName,
-        members: draftMembers,
-        currency: currencyValue
-      })
-    });
-    if (res.ok) {
-      const data = await res.json();
-      if (data && data.trip) {
-        createdTrip = { ...data.trip, user_modified: true };
+  for (const base of getApiBases()) {
+    try {
+      const res = await fetch(`${base}/api/trips`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: newTripId,
+          name: tripName,
+          members: draftMembers,
+          currency: currencyValue
+        })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data && data.trip) {
+          createdTrip = { ...data.trip, user_modified: true };
+        }
       }
-    }
-  } catch (_) {}
+    } catch (_) {}
+  }
 
   allTripsMap[createdTrip.id] = createdTrip;
   saveLocalTripsMap(allTripsMap);
@@ -811,29 +842,32 @@ function renderHomeTripsList() {
 async function openTrip(tripId) {
   let localTrip = allTripsMap[tripId];
 
-  try {
-    const res = await fetch(`/api/trips/${encodeURIComponent(tripId)}/open`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({})
-    });
-    if (res.ok) {
-      const data = await res.json();
-      if (data && data.trip) {
-        const chosen = chooseNewerTrip(localTrip, data.trip);
-        allTripsMap[tripId] = chosen;
-        saveLocalTripsMap(allTripsMap);
+  for (const base of getApiBases()) {
+    try {
+      const res = await fetch(`${base}/api/trips/${encodeURIComponent(tripId)}/open`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({})
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data && data.trip) {
+          const chosen = chooseNewerTrip(localTrip, data.trip);
+          localTrip = chosen;
+          allTripsMap[tripId] = chosen;
+          saveLocalTripsMap(allTripsMap);
 
-        if (localTrip && chosen === localTrip && localTrip.user_modified) {
-          fetch(`/api/trips/${encodeURIComponent(tripId)}`, {
-            method: "PUT",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ trip: localTrip })
-          }).catch(() => {});
+          if (chosen === localTrip && localTrip.user_modified) {
+            fetch(`${base}/api/trips/${encodeURIComponent(tripId)}`, {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ trip: localTrip })
+            }).catch(() => {});
+          }
         }
       }
-    }
-  } catch (_) {}
+    } catch (_) {}
+  }
 
   const tripObj = allTripsMap[tripId];
   if (!tripObj) return;
