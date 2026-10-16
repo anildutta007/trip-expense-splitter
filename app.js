@@ -355,8 +355,6 @@ function getApiBases() {
 }
 
 function createDefaultSampleTripsMap() {
-  const today = new Date().toISOString().split("T")[0];
-  const seedIso = "2025-01-01T00:00:00.000Z";
   const sholayCreated = "2026-10-16T11:43:06.890334";
   const sholayUpdated = "2026-10-16T12:10:00.054Z";
   return {
@@ -374,57 +372,6 @@ function createDefaultSampleTripsMap() {
       user_modified: false,
       created_at: sholayCreated,
       updated_at: sholayUpdated
-    },
-    "trip-sample-cotswolds": {
-      id: "trip-sample-cotswolds",
-      name: "Cotswolds Weekend Getaway",
-      currency: "£",
-      members: ["Anil", "Priya", "Sam", "Maya"],
-      expenses: [
-        {
-          id: "exp-sample-1",
-          paid_by: "Anil",
-          amount: 180.00,
-          description: "Countryside Cottage Deposit",
-          category: "Accommodation",
-          date: today,
-          shared_by: ["Anil", "Priya", "Sam", "Maya"],
-          source: "manual",
-          receipt_name: null,
-          receipt_data_url: null,
-          created_at: seedIso
-        },
-        {
-          id: "exp-sample-2",
-          paid_by: "Priya",
-          amount: 64.80,
-          description: "The Swan Country Pub Dinner",
-          category: "Food & Drink",
-          date: today,
-          shared_by: ["Anil", "Priya", "Sam", "Maya"],
-          source: "manual",
-          receipt_name: "swan_pub_receipt.jpg",
-          receipt_data_url: null,
-          created_at: seedIso
-        },
-        {
-          id: "exp-sample-3",
-          paid_by: "Sam",
-          amount: 42.00,
-          description: "Fuel & Parking",
-          category: "Transport",
-          date: today,
-          shared_by: ["Anil", "Priya", "Sam"],
-          source: "manual",
-          receipt_name: null,
-          receipt_data_url: null,
-          created_at: seedIso
-        }
-      ],
-      payments: [],
-      user_modified: false,
-      created_at: seedIso,
-      updated_at: seedIso
     }
   };
 }
@@ -496,19 +443,22 @@ async function loadAllTrips() {
   const lsMap = getLocalTripsMap();
   const idbMap = await readTripsFromIdb();
 
-  // Start with default trips (including Sholay Trip) so every browser has them
+  // Start with default trips (Sholay Trip) so every browser has them
   const mergedLocal = { ...createDefaultSampleTripsMap() };
   if (lsMap && typeof lsMap === "object") {
     for (const [tid, t] of Object.entries(lsMap)) {
+      if (tid === "trip-sample-cotswolds") continue;
       mergedLocal[tid] = chooseNewerTrip(mergedLocal[tid], t);
     }
   }
   if (idbMap && typeof idbMap === "object") {
     for (const [tid, t] of Object.entries(idbMap)) {
+      if (tid === "trip-sample-cotswolds") continue;
       mergedLocal[tid] = chooseNewerTrip(mergedLocal[tid], t);
     }
   }
 
+  delete mergedLocal["trip-sample-cotswolds"];
   allTripsMap = mergedLocal;
 
   for (const base of getApiBases()) {
@@ -519,6 +469,7 @@ async function loadAllTrips() {
         if (data && Array.isArray(data.trips)) {
           const serverIds = new Set();
           for (const sTrip of data.trips) {
+            if (sTrip.id === "trip-sample-cotswolds") continue;
             serverIds.add(sTrip.id);
             const fullServerTrip = {
               id: sTrip.id,
@@ -562,6 +513,13 @@ async function loadAllTrips() {
       }
     } catch (_) {}
   }
+
+  delete allTripsMap["trip-sample-cotswolds"];
+  try {
+    if (localStorage.getItem(STORAGE_KEY_ACTIVE_TRIP) === "trip-sample-cotswolds") {
+      localStorage.removeItem(STORAGE_KEY_ACTIVE_TRIP);
+    }
+  } catch (_) {}
 
   saveLocalTripsMap(allTripsMap);
   renderHomeTripsList();

@@ -79,12 +79,9 @@ def get_effective_api_key(client_key: Optional[str] = None) -> Optional[str]:
 
 
 def default_seed_trips() -> Dict[str, Any]:
-    """Provides default trips including Sholay Trip and Cotswolds Weekend Getaway."""
-    seed_iso = "2025-01-01T00:00:00.000Z"
+    """Provides default trips (Sholay Trip)."""
     sholay_created = "2026-10-16T11:43:06.890334"
     sholay_updated = "2026-10-16T12:10:00.054Z"
-    today_str = datetime.date.today().isoformat()
-    sample_id = "trip-sample-cotswolds"
     sholay_id = "trip-mvawfb6j-xahn"
     return {
         sholay_id: {
@@ -102,58 +99,6 @@ def default_seed_trips() -> Dict[str, Any]:
             "user_modified": False,
             "created_at": sholay_created,
             "updated_at": sholay_updated
-        },
-        sample_id: {
-            "id": sample_id,
-            "name": "Cotswolds Weekend Getaway",
-            "pin": "0000",
-            "currency": "£",
-            "members": ["Anil", "Priya", "Sam", "Maya"],
-            "expenses": [
-                {
-                    "id": "exp-sample-1",
-                    "paid_by": "Anil",
-                    "amount": 180.00,
-                    "description": "Countryside Cottage Deposit",
-                    "category": "Accommodation",
-                    "date": today_str,
-                    "shared_by": ["Anil", "Priya", "Sam", "Maya"],
-                    "source": "manual",
-                    "receipt_name": None,
-                    "receipt_data_url": None,
-                    "created_at": seed_iso
-                },
-                {
-                    "id": "exp-sample-2",
-                    "paid_by": "Priya",
-                    "amount": 64.80,
-                    "description": "The Swan Country Pub Dinner",
-                    "category": "Food & Drink",
-                    "date": today_str,
-                    "shared_by": ["Anil", "Priya", "Sam", "Maya"],
-                    "source": "manual",
-                    "receipt_name": "swan_pub_receipt.jpg",
-                    "receipt_data_url": None,
-                    "created_at": seed_iso
-                },
-                {
-                    "id": "exp-sample-3",
-                    "paid_by": "Sam",
-                    "amount": 42.00,
-                    "description": "Fuel & Parking",
-                    "category": "Transport",
-                    "date": today_str,
-                    "shared_by": ["Anil", "Priya", "Sam"],
-                    "source": "manual",
-                    "receipt_name": None,
-                    "receipt_data_url": None,
-                    "created_at": seed_iso
-                }
-            ],
-            "payments": [],
-            "user_modified": False,
-            "created_at": seed_iso,
-            "updated_at": seed_iso
         }
     }
 
@@ -170,9 +115,12 @@ def get_stored_trips() -> Dict[str, Any]:
                         loaded = json.load(f)
                         if isinstance(loaded, dict):
                             for k, v in loaded.items():
+                                if k == "trip-sample-cotswolds":
+                                    continue
                                 merged[k] = v
             except Exception as e:
                 print(f"Failed reading trips file {candidate}:", e)
+        merged.pop("trip-sample-cotswolds", None)
         _in_memory_trips = merged
         save_stored_trips(_in_memory_trips)
     return _in_memory_trips

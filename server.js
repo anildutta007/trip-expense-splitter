@@ -86,11 +86,8 @@ function normalizeDate(rawDate) {
 }
 
 function defaultSeedTrips() {
-  const seedIso = '2025-01-01T00:00:00.000Z';
   const sholayCreated = '2026-10-16T11:43:06.890334';
   const sholayUpdated = '2026-10-16T12:10:00.054Z';
-  const today = new Date().toISOString().split('T')[0];
-  const sampleId = 'trip-sample-cotswolds';
   const sholayId = 'trip-mvawfb6j-xahn';
   return {
     [sholayId]: {
@@ -108,58 +105,6 @@ function defaultSeedTrips() {
       user_modified: false,
       created_at: sholayCreated,
       updated_at: sholayUpdated
-    },
-    [sampleId]: {
-      id: sampleId,
-      name: 'Cotswolds Weekend Getaway',
-      pin: '0000',
-      currency: '£',
-      members: ['Anil', 'Priya', 'Sam', 'Maya'],
-      expenses: [
-        {
-          id: 'exp-sample-1',
-          paid_by: 'Anil',
-          amount: 180.00,
-          description: 'Countryside Cottage Deposit',
-          category: 'Accommodation',
-          date: today,
-          shared_by: ['Anil', 'Priya', 'Sam', 'Maya'],
-          source: 'manual',
-          receipt_name: null,
-          receipt_data_url: null,
-          created_at: seedIso
-        },
-        {
-          id: 'exp-sample-2',
-          paid_by: 'Priya',
-          amount: 64.80,
-          description: 'The Swan Country Pub Dinner',
-          category: 'Food & Drink',
-          date: today,
-          shared_by: ['Anil', 'Priya', 'Sam', 'Maya'],
-          source: 'manual',
-          receipt_name: 'swan_pub_receipt.jpg',
-          receipt_data_url: null,
-          created_at: seedIso
-        },
-        {
-          id: 'exp-sample-3',
-          paid_by: 'Sam',
-          amount: 42.00,
-          description: 'Fuel & Parking',
-          category: 'Transport',
-          date: today,
-          shared_by: ['Anil', 'Priya', 'Sam'],
-          source: 'manual',
-          receipt_name: null,
-          receipt_data_url: null,
-          created_at: seedIso
-        }
-      ],
-      payments: [],
-      user_modified: false,
-      created_at: seedIso,
-      updated_at: seedIso
     }
   };
 }
@@ -176,11 +121,13 @@ function getStoredTrips() {
         const parsed = JSON.parse(raw);
         if (parsed && typeof parsed === 'object') {
           for (const [k, v] of Object.entries(parsed)) {
+            if (k === 'trip-sample-cotswolds') continue;
             merged[k] = v;
           }
         }
       }
     } catch (_) {}
+    delete merged['trip-sample-cotswolds'];
     inMemoryTrips = merged;
     saveStoredTrips(inMemoryTrips);
   }
