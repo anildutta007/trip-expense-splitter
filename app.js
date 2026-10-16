@@ -3,10 +3,12 @@
  * Supports:
  * 1. Creating trips with Name & Everyone's Names, listed on the home page
  * 2. Opening any trip directly from the home page
- * 3. Adding an expense by hand (who paid, amount, category, tick who shared, optional bill photo via Camera Snapshot or File Upload)
- * 4. AI Receipt Scanning via Camera Snapshot or uploading 1 or more photos/PDFs (reads total, description, category, date; splits between everyone)
- * 5. Who pays whom (strictly fewest payments to settle up, "Mark paid" -> moves to payments list, "Undo" there)
- * 6. Exporting all expenses as a CSV spreadsheet
+ * 3. Adding, removing, or updating/renaming people in the group after the trip is created
+ * 4. 20-second "Yeh Dosti Hum Nahi Todenge" (Sholay) music player
+ * 5. Adding an expense by hand (who paid, amount, category, tick who shared, optional bill photo via Camera Snapshot or File Upload)
+ * 6. AI Receipt Scanning via Camera Snapshot or uploading 1 or more photos/PDFs (reads total, description, category, date; splits between everyone)
+ * 7. Who pays whom (strictly fewest payments to settle up, "Mark paid" -> moves to payments list, "Undo" there)
+ * 8. Exporting all expenses as a CSV spreadsheet
  */
 
 const STORAGE_KEY_TRIPS = "tripsplit_ai_trips_v1";
@@ -35,6 +37,19 @@ let cameraStream = null;
 let cameraTargetMode = "manual"; // 'manual' | 'scan'
 let cameraFacingMode = "environment";
 
+// "Yeh Dosti Hum Nahi Todenge" (Sholay) 20-Second Music State
+const YEH_DOSTI_DURATION_SEC = 20;
+const YEH_DOSTI_STREAM_URLS = [
+  "https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview211/v4/53/6c/7c/536c7c03-29d3-efe2-41d0-3fc76b0af180/mzaf_157281235695885810.plus.aac.p.m4a",
+  "https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview221/v4/72/72/37/727237d8-c4f1-7130-6706-bea8d88b8664/mzaf_7999694924097754293.plus.aac.p.m4a"
+];
+let yehDostiAudio = null;
+let yehDostiSynthCtx = null;
+let yehDostiInterval = null;
+let yehDostiStopTimeout = null;
+let isYehDostiPlaying = false;
+let yehDostiStartTimeMs = 0;
+
 // ----------------- Initialization -----------------
 
 document.addEventListener("DOMContentLoaded", async () => {
@@ -50,6 +65,171 @@ function initDefaultDateInputs() {
   if (dateInput) dateInput.value = today;
 }
 
+// ----------------- "YEH DOSTI HUM NAHI TODENGE" (SHOLAY) 20s MUSIC PLAYER -----------------
+
+function toggleYehDostiMusic() {
+  if (isYehDostiPlaying) {
+    stopYehDostiMusic();
+  } else {
+    playYehDostiMusic();
+  }
+}
+
+async function playYehDostiMusic() {
+  stopYehDostiMusic();
+  isYehDostiPlaying = true;
+  yehDostiStartTimeMs = Date.now();
+  updateYehDostiUi(true, YEH_DOSTI_DURATION_SEC, 0);
+
+  let startedStream = false;
+  try {
+    yehDostiAudio = new Audio(YEH_DOSTI_STREAM_URLS[0]);
+    yehDostiAudio.crossOrigin = "anonymous";
+    yehDostiAudio.volume = 0.85;
+    yehDostiAudio.currentTime = 0;
+    await yehDostiAudio.play();
+    startedStream = true;
+  } catch (_) {
+    try {
+      yehDostiAudio = new Audio(YEH_DOSTI_STREAM_URLS[1]);
+      yehDostiAudio.volume = 0.85;
+      yehDostiAudio.currentTime = 0;
+      await yehDostiAudio.play();
+      startedStream = true;
+    } catch (err2) {
+      startedStream = false;
+    }
+  }
+
+  // Fallback to Web Audio API synthesizer playing the "Yeh Dosti Hum Nahi Todenge" melody if offline
+  if (!startedStream) {
+    startYehDostiSynthMelody(YEH_DOSTI_DURATION_SEC);
+  }
+
+  // Update 20-second progress bar & countdown every 200ms
+  yehDostiInterval = setInterval(() => {
+    const elapsedSec = (Date.now() - yehDostiStartTimeMs) / 1000;
+    const remainingSec = Math.max(0, Math.ceil(YEH_DOSTI_DURATION_SEC - elapsedSec));
+    const pct = Math.min(100, (elapsedSec / YEH_DOSTI_DURATION_SEC) * 100);
+    updateYehDostiUi(true, remainingSec, pct);
+
+    if (elapsedSec >= YEH_DOSTI_DURATION_SEC) {
+      stopYehDostiMusic();
+    }
+  }, 200);
+
+  // Strict 20-second stop timer
+  yehDostiStopTimeout = setTimeout(() => {
+    stopYehDostiMusic();
+  }, YEH_DOSTI_DURATION_SEC * 1000);
+}
+
+function stopYehDostiMusic() {
+  isYehDostiPlaying = false;
+  if (yehDostiInterval) {
+    clearInterval(yehDostiInterval);
+    yehDostiInterval = null;
+  }
+  if (yehDostiStopTimeout) {
+    clearTimeout(yehDostiStopTimeout);
+    yehDostiStopTimeout = null;
+  }
+  if (yehDostiAudio) {
+    try {
+      yehDostiAudio.pause();
+      yehDostiAudio.currentTime = 0;
+    } catch (_) {}
+    yehDostiAudio = null;
+  }
+  if (yehDostiSynthCtx) {
+    try {
+      yehDostiSynthCtx.close();
+    } catch (_) {}
+    yehDostiSynthCtx = null;
+  }
+  updateYehDostiUi(false, YEH_DOSTI_DURATION_SEC, 0);
+}
+
+function updateYehDostiUi(playing, remainingSec, pct) {
+  const bar = document.getElementById("yehDostiPlayerBar");
+  const progress = document.getElementById("yehDostiProgressBar");
+  const timer = document.getElementById("yehDostiTimerLabel");
+  const btnIcon = document.getElementById("yehDostiHeaderIcon");
+  const btnText = document.getElementById("yehDostiHeaderText");
+  const btn = document.getElementById("yehDostiHeaderBtn");
+
+  if (playing) {
+    if (bar) bar.classList.remove("hidden");
+    if (progress) progress.style.width = `${pct}%`;
+    if (timer) timer.textContent = `${remainingSec}s`;
+    if (btnIcon) btnIcon.className = "ph-bold ph-stop-circle text-rose-600 text-sm animate-spin";
+    if (btnText) btnText.textContent = `Playing (${remainingSec}s)`;
+    if (btn) btn.className = "text-xs font-bold flex items-center space-x-1.5 px-3.5 py-2 rounded-xl bg-amber-100 text-amber-950 border border-amber-400 transition shadow-xs cursor-pointer";
+  } else {
+    if (bar) bar.classList.add("hidden");
+    if (progress) progress.style.width = "0%";
+    if (timer) timer.textContent = "20s";
+    if (btnIcon) btnIcon.className = "ph-bold ph-music-notes text-amber-600 text-sm";
+    if (btnText) btnText.textContent = "Yeh Dosti (20s)";
+    if (btn) btn.className = "text-xs font-bold flex items-center space-x-1.5 px-3.5 py-2 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 transition shadow-xs cursor-pointer";
+  }
+}
+
+function startYehDostiSynthMelody(durationSec) {
+  try {
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    if (!AudioCtx) return;
+    yehDostiSynthCtx = new AudioCtx();
+    const ctx = yehDostiSynthCtx;
+
+    // Iconic "Yeh Dosti Hum Nahi Todenge" melody phrases in C major (frequencies in Hz)
+    const N = {
+      C4: 261.63, D4: 293.66, E4: 329.63, F4: 349.23, G4: 392.00, A4: 440.00, B4: 493.88,
+      C5: 523.25, D5: 587.33, E5: 659.25, G5: 783.99, R: 0
+    };
+
+    // Sequence of [noteFreq, durationSeconds] representing:
+    // "Yeh dosti... hum nahi todenge... todenge dum magar... tera saath na chhodenge!"
+    const phrase = [
+      // "Yeh do-sti..."
+      [N.G4, 0.45], [N.A4, 0.45], [N.G4, 0.90], [N.R, 0.20],
+      // "hum na-hi to-den-ge..."
+      [N.E4, 0.35], [N.G4, 0.35], [N.A4, 0.40], [N.C5, 0.45], [N.B4, 0.40], [N.A4, 0.75], [N.R, 0.25],
+      // "to-den-ge dum ma-gar..."
+      [N.A4, 0.35], [N.B4, 0.35], [N.C5, 0.45], [N.D5, 0.45], [N.B4, 0.45], [N.G4, 0.70], [N.R, 0.20],
+      // "te-ra saath na chho-den-ge!"
+      [N.E4, 0.35], [N.G4, 0.35], [N.A4, 0.45], [N.G4, 0.40], [N.F4, 0.35], [N.E4, 0.40], [N.D4, 0.40], [N.C4, 0.85], [N.R, 0.35]
+    ];
+
+    let cursor = ctx.currentTime + 0.05;
+    const endTime = cursor + durationSec;
+
+    while (cursor < endTime) {
+      for (const [freq, dur] of phrase) {
+        if (cursor >= endTime) break;
+        if (freq > 0) {
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = "triangle";
+          osc.frequency.setValueAtTime(freq, cursor);
+
+          gain.gain.setValueAtTime(0.001, cursor);
+          gain.gain.exponentialRampToValueAtTime(0.22, cursor + 0.04);
+          gain.gain.exponentialRampToValueAtTime(0.001, cursor + dur - 0.02);
+
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.start(cursor);
+          osc.stop(cursor + dur);
+        }
+        cursor += dur;
+      }
+    }
+  } catch (_) {}
+}
+
+// ----------------- LOCAL & SERVER STORAGE -----------------
+
 function getLocalTripsMap() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY_TRIPS);
@@ -62,7 +242,6 @@ function getLocalTripsMap() {
   } catch (e) {
     console.warn("Could not read localStorage trips:", e);
   }
-  // Seed with a default sample trip if empty
   const today = new Date().toISOString().split("T")[0];
   const nowIso = new Date().toISOString();
   const sample = {
@@ -155,13 +334,12 @@ async function loadAllTrips() {
         saveLocalTripsMap(allTripsMap);
       }
     }
-  } catch (_) {
-    // Offline or standalone static mode
-  }
+  } catch (_) {}
   renderHomeTripsList();
 }
 
 async function syncTripToServer(tripObj) {
+  tripObj.updated_at = new Date().toISOString();
   allTripsMap[tripObj.id] = tripObj;
   saveLocalTripsMap(allTripsMap);
   try {
@@ -170,9 +348,7 @@ async function syncTripToServer(tripObj) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ trip: tripObj })
     });
-  } catch (_) {
-    // Ignore network error in offline mode
-  }
+  } catch (_) {}
 }
 
 // ----------------- 1. CREATE A TRIP & HOME PAGE LIST -----------------
@@ -233,7 +409,6 @@ function renderDraftMembers() {
 async function handleCreateTrip(event) {
   event.preventDefault();
 
-  // Also capture any name left in the text input
   addDraftMemberFromInput();
 
   const nameInput = document.getElementById("tripNameInput");
@@ -282,20 +457,19 @@ async function handleCreateTrip(event) {
         createdTrip = data.trip;
       }
     }
-  } catch (_) {
-    // Saved locally below
-  }
+  } catch (_) {}
 
   allTripsMap[createdTrip.id] = createdTrip;
   saveLocalTripsMap(allTripsMap);
 
-  // Reset form
   nameInput.value = "";
   draftMembers = [];
   renderDraftMembers();
   renderHomeTripsList();
 
-  showToast(`Trip "${createdTrip.name}" created! Click it on the list to open.`, "success");
+  // Play 20 seconds of "Yeh Dosti Hum Nahi Todenge" to celebrate creating the trip!
+  playYehDostiMusic();
+  showToast(`Trip "${createdTrip.name}" created! Playing "Yeh Dosti" (20s)!`, "success");
 }
 
 function renderHomeTripsList() {
@@ -393,9 +567,7 @@ async function openTrip(tripId) {
         saveLocalTripsMap(allTripsMap);
       }
     }
-  } catch (_) {
-    // Use localTrip in offline mode
-  }
+  } catch (_) {}
 
   const tripObj = allTripsMap[tripId];
   if (!tripObj) return;
@@ -419,12 +591,205 @@ function goHome() {
   renderHomeTripsList();
 }
 
-// ----------------- 3. CAMERA SNAPSHOT MODAL (FOR MANUAL BILL OR AI SCAN) -----------------
+// ----------------- 3. ADD / REMOVE / UPDATE PEOPLE IN GROUP AFTER TRIP CREATED -----------------
+
+function openManageMembersModal() {
+  if (!activeTrip) return;
+  const input = document.getElementById("newTripMemberInput");
+  if (input) input.value = "";
+  renderManageMembersList();
+  document.getElementById("manageMembersModal").classList.remove("hidden");
+}
+
+function closeManageMembersModal() {
+  document.getElementById("manageMembersModal").classList.add("hidden");
+}
+
+function renderManageMembersList() {
+  if (!activeTrip) return;
+  const container = document.getElementById("manageMembersListContainer");
+  if (!container) return;
+
+  const members = Array.isArray(activeTrip.members) ? activeTrip.members : [];
+
+  container.innerHTML = members.map((memberName, idx) => `
+    <div class="flex items-center justify-between gap-2 p-2.5 rounded-xl bg-slate-50 border border-slate-200">
+      <div class="flex items-center space-x-2 flex-1">
+        <i class="ph-bold ph-user text-indigo-600 text-sm shrink-0"></i>
+        <input
+          id="editMemberInput_${idx}"
+          type="text"
+          value="${escapeAttr(memberName)}"
+          onkeydown="if(event.key==='Enter'){event.preventDefault(); saveRenamedMember(${idx});}"
+          class="w-full px-2.5 py-1.5 rounded-lg bg-white border border-slate-300 text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+        >
+      </div>
+
+      <div class="flex items-center space-x-1.5 shrink-0">
+        <button
+          type="button"
+          onclick="saveRenamedMember(${idx})"
+          class="px-2.5 py-1.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 font-bold text-[11px] transition cursor-pointer"
+          title="Save updated name"
+        >
+          Update
+        </button>
+        <button
+          type="button"
+          onclick="removeMemberFromActiveTrip(${idx})"
+          class="px-2.5 py-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 font-bold text-[11px] transition flex items-center space-x-1 cursor-pointer"
+          title="Remove person from group"
+        >
+          <i class="ph-bold ph-trash"></i>
+          <span>Remove</span>
+        </button>
+      </div>
+    </div>
+  `).join("");
+}
+
+async function handleAddMemberToActiveTrip(event) {
+  event.preventDefault();
+  if (!activeTrip) return;
+
+  const input = document.getElementById("newTripMemberInput");
+  if (!input) return;
+  const raw = (input.value || "").trim();
+  if (!raw) return;
+
+  if (!Array.isArray(activeTrip.members)) activeTrip.members = [];
+
+  const parts = raw.split(",").map(s => s.trim()).filter(Boolean);
+  const addedNames = [];
+
+  for (const part of parts) {
+    const exists = activeTrip.members.some(m => m.toLowerCase() === part.toLowerCase());
+    if (!exists) {
+      activeTrip.members.push(part);
+      addedNames.push(part);
+    }
+  }
+
+  if (addedNames.length === 0) {
+    showToast("That person is already in the group.", "error");
+    return;
+  }
+
+  input.value = "";
+  await syncTripToServer(activeTrip);
+  renderManageMembersList();
+  populateTripMemberControls();
+  renderActiveTripDashboard();
+
+  showToast(`Added ${addedNames.join(", ")} to "${activeTrip.name}"!`, "success");
+}
+
+async function saveRenamedMember(index) {
+  if (!activeTrip || !Array.isArray(activeTrip.members)) return;
+  const oldName = activeTrip.members[index];
+  if (!oldName) return;
+
+  const input = document.getElementById(`editMemberInput_${index}`);
+  if (!input) return;
+  const newName = (input.value || "").trim();
+
+  if (!newName) {
+    showToast("Name cannot be empty.", "error");
+    input.value = oldName;
+    return;
+  }
+
+  if (newName === oldName) {
+    showToast(`Name "${newName}" is unchanged.`, "info");
+    return;
+  }
+
+  const duplicate = activeTrip.members.some((m, idx) => idx !== index && m.toLowerCase() === newName.toLowerCase());
+  if (duplicate) {
+    showToast(`"${newName}" is already in this trip.`, "error");
+    input.value = oldName;
+    return;
+  }
+
+  // 1. Update in members array
+  activeTrip.members[index] = newName;
+
+  // 2. Cascade rename across all expenses (paid_by and shared_by)
+  if (Array.isArray(activeTrip.expenses)) {
+    for (const exp of activeTrip.expenses) {
+      if (exp.paid_by === oldName) {
+        exp.paid_by = newName;
+      }
+      if (Array.isArray(exp.shared_by)) {
+        exp.shared_by = exp.shared_by.map(m => (m === oldName ? newName : m));
+      }
+    }
+  }
+
+  // 3. Cascade rename across all recorded payments (from and to)
+  if (Array.isArray(activeTrip.payments)) {
+    for (const pay of activeTrip.payments) {
+      if (pay.from === oldName) pay.from = newName;
+      if (pay.to === oldName) pay.to = newName;
+    }
+  }
+
+  await syncTripToServer(activeTrip);
+  renderManageMembersList();
+  populateTripMemberControls();
+  renderActiveTripDashboard();
+
+  showToast(`Updated "${oldName}" to "${newName}" across the trip and all expenses!`, "success");
+}
+
+async function removeMemberFromActiveTrip(index) {
+  if (!activeTrip || !Array.isArray(activeTrip.members)) return;
+  if (activeTrip.members.length <= 1) {
+    showToast("A trip must have at least one person in the group.", "error");
+    return;
+  }
+
+  const targetName = activeTrip.members[index];
+  if (!targetName) return;
+
+  // Remove from members list
+  activeTrip.members.splice(index, 1);
+  const remainingMembers = [...activeTrip.members];
+
+  // Cleanly update expenses so balances remain 100% consistent
+  if (Array.isArray(activeTrip.expenses)) {
+    // Remove expenses paid by the removed member OR remove them from shared_by
+    activeTrip.expenses = activeTrip.expenses.filter(exp => exp.paid_by !== targetName);
+    for (const exp of activeTrip.expenses) {
+      if (Array.isArray(exp.shared_by)) {
+        exp.shared_by = exp.shared_by.filter(m => m !== targetName);
+        if (exp.shared_by.length === 0) {
+          exp.shared_by = [...remainingMembers];
+        }
+      }
+    }
+  }
+
+  // Remove any recorded payments involving the removed person
+  if (Array.isArray(activeTrip.payments)) {
+    activeTrip.payments = activeTrip.payments.filter(
+      p => p.from !== targetName && p.to !== targetName
+    );
+  }
+
+  await syncTripToServer(activeTrip);
+  renderManageMembersList();
+  populateTripMemberControls();
+  renderActiveTripDashboard();
+
+  showToast(`Removed "${targetName}" from the group and recalculated splits.`, "info");
+}
+
+// ----------------- 4. CAMERA SNAPSHOT MODAL (FOR MANUAL BILL OR AI SCAN) -----------------
 
 async function openCameraModal(targetMode = "manual") {
   cameraTargetMode = targetMode;
 
-  // Check if browser supports live getUserMedia camera capture
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
     triggerFallbackCameraInput(targetMode);
     return;
@@ -444,7 +809,6 @@ async function openCameraModal(targetMode = "manual") {
 async function startCameraStream() {
   stopCameraStream();
   const video = document.getElementById("cameraVideoStream");
-  const errEl = document.getElementById("cameraErrorMsg");
 
   try {
     cameraStream = await navigator.mediaDevices.getUserMedia({
@@ -535,7 +899,6 @@ async function captureBillSnapshot() {
     document.getElementById("manualBillPhotoLabel").textContent = "Change Photo";
     showToast("Bill snapshot captured and attached!", "success");
   } else {
-    // Convert dataUrl to a File object and add to AI Scan queue
     const res = await fetch(dataUrl);
     const blob = await res.blob();
     const fileObj = new File([blob], filename, { type: "image/jpeg" });
@@ -545,7 +908,7 @@ async function captureBillSnapshot() {
   }
 }
 
-// ----------------- 4. ADD AN EXPENSE BY HAND -----------------
+// ----------------- 5. ADD AN EXPENSE BY HAND -----------------
 
 function switchExpenseTab(mode) {
   const manualForm = document.getElementById("manualExpenseForm");
@@ -575,7 +938,6 @@ function populateTripMemberControls() {
     el.textContent = cur;
   });
 
-  // Populate Who Paid dropdowns (Manual + Scan)
   const manualPaidBy = document.getElementById("manualPaidBy");
   const scanPaidBy = document.getElementById("scanPaidBy");
 
@@ -583,7 +945,6 @@ function populateTripMemberControls() {
   if (manualPaidBy) manualPaidBy.innerHTML = optionsHtml;
   if (scanPaidBy) scanPaidBy.innerHTML = optionsHtml;
 
-  // Populate Tick Who Shared It checkboxes
   const checkboxesContainer = document.getElementById("manualSharedCheckboxes");
   if (checkboxesContainer) {
     checkboxesContainer.innerHTML = members.map(m => `
@@ -714,7 +1075,6 @@ async function handleAddManualExpense(event) {
 
   await syncTripToServer(activeTrip);
 
-  // Reset form fields
   document.getElementById("manualAmount").value = "";
   descInput.value = "";
   toggleAllManualShared(true);
@@ -725,7 +1085,7 @@ async function handleAddManualExpense(event) {
   showToast(`Added "${newExpense.description}" (${cur}${newExpense.amount.toFixed(2)}) paid by ${newExpense.paid_by}.`, "success");
 }
 
-// ----------------- 5. SCAN RECEIPTS WITH AI (SNAPSHOT, PHOTOS OR PDFS) -----------------
+// ----------------- 6. SCAN RECEIPTS WITH AI (SNAPSHOT, PHOTOS OR PDFS) -----------------
 
 function handleScanFilesSelected(event) {
   const incoming = Array.from(event.target.files || []);
@@ -795,7 +1155,6 @@ async function handleScanReceipts(event) {
   submitBtnText.textContent = `AI Scanning ${selectedScanFiles.length} file(s)...`;
 
   try {
-    // Prepare image previews and base64 payloads for all uploaded/captured files
     const previewMap = {};
     const filesPayload = [];
     for (const f of selectedScanFiles) {
@@ -856,7 +1215,7 @@ async function handleScanReceipts(event) {
         description: item.description || "Scanned Receipt",
         category: CATEGORY_META[item.category] ? item.category : "Food & Drink",
         date: item.date || new Date().toISOString().split("T")[0],
-        shared_by: everyone, // Scanned receipts are always split between everyone
+        shared_by: everyone,
         source: "scanned",
         receipt_name: item.source_file || null,
         receipt_data_url: (item.source_file && previewMap[item.source_file]) ? previewMap[item.source_file] : null,
@@ -867,7 +1226,6 @@ async function handleScanReceipts(event) {
 
     await syncTripToServer(activeTrip);
 
-    // Clear selected files
     selectedScanFiles = [];
     const scanInput = document.getElementById("scanFilesInput");
     if (scanInput) scanInput.value = "";
@@ -942,7 +1300,7 @@ async function deleteExpense(expenseId, prefillManual = false) {
   }
 }
 
-// ----------------- 6. WHO PAYS WHOM (FEWEST PAYMENTS + MARK PAID + UNDO) -----------------
+// ----------------- 7. WHO PAYS WHOM (FEWEST PAYMENTS + MARK PAID + UNDO) -----------------
 
 function calculateSettlementPlan(trip) {
   const members = Array.isArray(trip.members) ? trip.members : [];
@@ -1122,7 +1480,11 @@ function renderActiveTripDashboard() {
   const pillsEl = document.getElementById("activeTripMembersPills");
   if (pillsEl) {
     pillsEl.innerHTML = members.map(m => `
-      <span class="inline-flex items-center space-x-1 text-xs font-bold px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-700 border border-slate-200">
+      <span
+        onclick="openManageMembersModal()"
+        title="Click to edit or manage group members"
+        class="inline-flex items-center space-x-1 text-xs font-bold px-2.5 py-0.5 rounded-full bg-slate-100 hover:bg-indigo-50 text-slate-700 hover:text-indigo-700 border border-slate-200 cursor-pointer transition"
+      >
         <i class="ph-bold ph-user text-indigo-600"></i>
         <span>${escapeHtml(m)}</span>
       </span>
@@ -1338,7 +1700,7 @@ function renderActiveTripDashboard() {
   }).join("");
 }
 
-// ----------------- 7. EXPORT CSV (DOWNLOAD ALL EXPENSES AS SPREADSHEET) -----------------
+// ----------------- 8. EXPORT CSV (DOWNLOAD ALL EXPENSES AS SPREADSHEET) -----------------
 
 function exportExpensesCSV() {
   if (!activeTrip) {

@@ -31,7 +31,19 @@
       </div>
 
       <!-- Right Controls -->
-      <div class="flex items-center space-x-2.5">
+      <div class="flex items-center flex-wrap gap-2">
+        <!-- Yeh Dosti (Sholay) 20-Second Music Button -->
+        <button
+          id="yehDostiHeaderBtn"
+          type="button"
+          onclick="toggleYehDostiMusic()"
+          class="text-xs font-bold flex items-center space-x-1.5 px-3.5 py-2 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 transition shadow-xs cursor-pointer"
+          title="Play 'Yeh Dosti Hum Nahi Todenge' from Sholay for 20 seconds"
+        >
+          <i id="yehDostiHeaderIcon" class="ph-bold ph-music-notes text-amber-600 text-sm"></i>
+          <span id="yehDostiHeaderText">Yeh Dosti (20s)</span>
+        </button>
+
         <!-- Shown only when inside an open trip -->
         <button id="headerBackHomeBtn" onclick="goHome()" class="hidden text-xs font-semibold flex items-center space-x-1.5 px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 transition cursor-pointer">
           <i class="ph-bold ph-folders text-slate-600"></i>
@@ -51,6 +63,35 @@
         </button>
       </div>
 
+    </div>
+
+    <!-- 20-SECOND "YEH DOSTI (SHOLAY)" NOW PLAYING BAR -->
+    <div id="yehDostiPlayerBar" class="hidden bg-gradient-to-r from-amber-500 via-orange-500 to-rose-500 text-white px-4 py-2 shadow-inner">
+      <div class="max-w-6xl mx-auto flex flex-wrap items-center justify-between gap-3">
+        <div class="flex items-center space-x-2.5">
+          <span class="w-6 h-6 rounded-full bg-white/20 flex items-center justify-center animate-pulse">
+            <i class="ph-bold ph-music-notes-simple text-sm"></i>
+          </span>
+          <div class="text-xs sm:text-sm font-bold tracking-tight">
+            <span>"Yeh Dosti Hum Nahi Todenge"</span>
+            <span class="text-amber-100 font-normal text-xs ml-1.5">— Sholay (Kishore Kumar &amp; Manna Dey)</span>
+          </div>
+        </div>
+
+        <div class="flex items-center space-x-3 ml-auto">
+          <div class="w-28 sm:w-40 h-2 rounded-full bg-black/20 overflow-hidden">
+            <div id="yehDostiProgressBar" class="h-full bg-white transition-all duration-200" style="width: 0%"></div>
+          </div>
+          <span id="yehDostiTimerLabel" class="text-xs font-extrabold tabular-nums">20s</span>
+          <button
+            type="button"
+            onclick="stopYehDostiMusic()"
+            class="px-2.5 py-1 rounded-lg bg-white/20 hover:bg-white/30 text-white text-xs font-bold transition cursor-pointer"
+          >
+            Stop
+          </button>
+        </div>
+      </div>
     </div>
   </header>
 
@@ -95,7 +136,7 @@
                 id="tripNameInput"
                 type="text"
                 required
-                placeholder="e.g., Lisbon Weekend, Lake District 2026"
+                placeholder="e.g., Goa Friends Trip, Lake District 2026"
                 class="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
               >
             </div>
@@ -121,7 +162,7 @@
                   + Add Name
                 </button>
               </div>
-              <p class="text-[11px] text-slate-400 mt-1">Tip: Press Enter or separate names with commas (e.g. Alice, Bob, Charlie).</p>
+              <p class="text-[11px] text-slate-400 mt-1">Tip: Press Enter or separate names with commas (e.g. Jai, Veeru, Basanti). You can also add/edit/remove names anytime later!</p>
 
               <!-- Draft Members Chips -->
               <div id="draftMembersList" class="flex flex-wrap gap-2 mt-3 min-h-[34px] p-2.5 rounded-xl bg-slate-50 border border-dashed border-slate-200">
@@ -184,19 +225,37 @@
 
       <!-- TRIP SUMMARY BANNER -->
       <div class="bg-white rounded-2xl border border-slate-200 card-shadow p-5 sm:p-6 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-        <div class="space-y-2">
+        <div class="space-y-2.5">
           <div class="flex flex-wrap items-center gap-2.5">
             <button onclick="goHome()" class="inline-flex items-center space-x-1 text-xs font-bold text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 px-2.5 py-1 rounded-lg transition cursor-pointer">
               <i class="ph-bold ph-arrow-left"></i>
               <span>All Trips</span>
             </button>
             <h2 id="activeTripTitle" class="text-xl sm:text-2xl font-extrabold text-slate-900">Trip Name</h2>
+            <button
+              type="button"
+              onclick="playYehDostiMusic()"
+              class="inline-flex items-center space-x-1 text-[11px] font-bold px-2.5 py-1 rounded-full bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 transition cursor-pointer"
+              title="Play 20s of Yeh Dosti Hum Nahi Todenge"
+            >
+              <i class="ph-bold ph-music-notes text-amber-600"></i>
+              <span>🎵 Play Yeh Dosti (20s)</span>
+            </button>
           </div>
 
-          <!-- Trip Members Pills -->
-          <div class="flex flex-wrap items-center gap-1.5 pt-1">
+          <!-- Trip Members Pills + Manage Group Members Button -->
+          <div class="flex flex-wrap items-center gap-1.5 pt-0.5">
             <span class="text-xs font-semibold text-slate-400 mr-1">Group Members:</span>
             <div id="activeTripMembersPills" class="flex flex-wrap gap-1.5"></div>
+            <button
+              type="button"
+              onclick="openManageMembersModal()"
+              class="inline-flex items-center space-x-1 text-xs font-bold px-2.5 py-1 rounded-full bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 transition cursor-pointer ml-1"
+              title="Add, rename, or remove people in this trip"
+            >
+              <i class="ph-bold ph-users-three"></i>
+              <span>+ Add / Edit People</span>
+            </button>
           </div>
         </div>
 
@@ -615,7 +674,66 @@
   </main>
 
   <!-- ===================================================================== -->
-  <!-- MODAL 1: LIVE CAMERA SNAPSHOT MODAL (FOR TAKING A BILL SNAPSHOT)      -->
+  <!-- MODAL 1: MANAGE GROUP MEMBERS (ADD / RENAME / REMOVE PEOPLE)          -->
+  <!-- ===================================================================== -->
+  <div id="manageMembersModal" class="fixed inset-0 z-50 hidden bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl border border-slate-200 max-w-md w-full overflow-hidden shadow-2xl animate-fade-in">
+      <div class="px-5 py-4 border-b border-slate-200 flex items-center justify-between bg-slate-50">
+        <div class="flex items-center space-x-2.5">
+          <div class="w-9 h-9 rounded-xl bg-indigo-100 text-indigo-600 flex items-center justify-center text-lg">
+            <i class="ph-bold ph-users-three"></i>
+          </div>
+          <div>
+            <h3 class="text-sm font-extrabold text-slate-900">Manage Group People</h3>
+            <p class="text-xs text-slate-500">Add new people, update names, or remove from trip</p>
+          </div>
+        </div>
+        <button type="button" onclick="closeManageMembersModal()" class="text-slate-400 hover:text-slate-700 cursor-pointer">
+          <i class="ph-bold ph-x text-lg"></i>
+        </button>
+      </div>
+
+      <div class="p-5 space-y-4">
+        <!-- Add New Person Form -->
+        <form onsubmit="handleAddMemberToActiveTrip(event)" class="flex space-x-2">
+          <input
+            id="newTripMemberInput"
+            type="text"
+            placeholder="Add new person's name..."
+            class="flex-1 px-3.5 py-2 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          >
+          <button
+            type="submit"
+            class="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs transition shrink-0 cursor-pointer"
+          >
+            + Add Person
+          </button>
+        </form>
+
+        <!-- Existing Members List (Rename or Remove) -->
+        <div class="space-y-2 max-h-72 overflow-y-auto pr-1" id="manageMembersListContainer">
+          <!-- Populated dynamically by JS -->
+        </div>
+
+        <p class="text-[11px] text-slate-400 leading-relaxed">
+          Renaming a person automatically updates their name across all existing expenses and payments.
+        </p>
+      </div>
+
+      <div class="px-5 py-3.5 bg-slate-50 border-t border-slate-200 flex justify-end">
+        <button
+          type="button"
+          onclick="closeManageMembersModal()"
+          class="px-5 py-2 rounded-xl bg-slate-800 hover:bg-slate-900 text-white font-bold text-xs transition cursor-pointer"
+        >
+          Done
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================================================================== -->
+  <!-- MODAL 2: LIVE CAMERA SNAPSHOT MODAL (FOR TAKING A BILL SNAPSHOT)      -->
   <!-- ===================================================================== -->
   <div id="cameraModal" class="fixed inset-0 z-50 hidden bg-slate-900/80 backdrop-blur-xs flex items-center justify-center p-4">
     <div class="bg-white rounded-2xl border border-slate-200 max-w-md w-full overflow-hidden shadow-2xl animate-fade-in">
@@ -668,7 +786,7 @@
   </div>
 
   <!-- ===================================================================== -->
-  <!-- MODAL 2: RECEIPT / BILL PHOTO VIEWER MODAL                            -->
+  <!-- MODAL 3: RECEIPT / BILL PHOTO VIEWER MODAL                            -->
   <!-- ===================================================================== -->
   <div id="receiptPreviewModal" class="fixed inset-0 z-50 hidden bg-slate-900/75 backdrop-blur-xs flex items-center justify-center p-4" onclick="closeReceiptPreviewModal()">
     <div class="bg-white rounded-2xl max-w-lg w-full overflow-hidden shadow-2xl animate-fade-in" onclick="event.stopPropagation()">
@@ -685,7 +803,7 @@
   </div>
 
   <!-- ===================================================================== -->
-  <!-- MODAL 3: GEMINI AI API KEY SETTINGS MODAL                             -->
+  <!-- MODAL 4: GEMINI AI API KEY SETTINGS MODAL                             -->
   <!-- ===================================================================== -->
   <div id="settingsModal" class="fixed inset-0 z-50 hidden bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
     <div class="bg-white rounded-2xl border border-slate-200 max-w-md w-full p-6 shadow-xl space-y-4 animate-fade-in">
