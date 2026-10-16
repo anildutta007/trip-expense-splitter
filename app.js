@@ -1,10 +1,10 @@
 /**
- * TripSplit AI — Frontend Application Logic
+ * Trip Split Expense — Frontend Application Logic
  * Supports:
- * 1. Creating trips with Name, Everyone's Names, and a PIN (starts as 0000)
- * 2. Listing all trips on the home page & requiring PIN before opening any trip
- * 3. Adding an expense by hand (who paid, amount, category, tick who shared, optional bill photo)
- * 4. AI Receipt Scanning for 1 or more photos or PDFs (reads total, description, category, date; splits between everyone)
+ * 1. Creating trips with Name & Everyone's Names, listed on the home page
+ * 2. Opening any trip directly from the home page
+ * 3. Adding an expense by hand (who paid, amount, category, tick who shared, optional bill photo via Camera Snapshot or File Upload)
+ * 4. AI Receipt Scanning via Camera Snapshot or uploading 1 or more photos/PDFs (reads total, description, category, date; splits between everyone)
  * 5. Who pays whom (strictly fewest payments to settle up, "Mark paid" -> moves to payments list, "Undo" there)
  * 6. Exporting all expenses as a CSV spreadsheet
  */
@@ -25,12 +25,15 @@ const CATEGORY_META = {
 // Application State
 let allTripsMap = {};          // { [tripId]: TripObject }
 let draftMembers = ["Alice", "Bob", "Charlie"]; // Initial starter chips in Create Trip form
-let pendingUnlockTripId = null;
-let activeTrip = null;         // Currently unlocked & open trip
-let unlockedPin = null;        // PIN used to unlock activeTrip
+let activeTrip = null;         // Currently open trip
 let manualPhotoDataUrl = null; // Optional bill photo attached to manual expense
 let manualPhotoName = null;
-let selectedScanFiles = [];    // Files queued for AI receipt scanning
+let selectedScanFiles = [];    // Files/snapshots queued for AI receipt scanning
+
+// Camera Snapshot State
+let cameraStream = null;
+let cameraTargetMode = "manual"; // 'manual' | 'scan'
+let cameraFacingMode = "environment";
 
 // ----------------- Initialization -----------------
 
@@ -59,14 +62,13 @@ function getLocalTripsMap() {
   } catch (e) {
     console.warn("Could not read localStorage trips:", e);
   }
-  // Seed with a default sample trip (PIN: 0000) if empty
+  // Seed with a default sample trip if empty
   const today = new Date().toISOString().split("T")[0];
   const nowIso = new Date().toISOString();
   const sample = {
     "trip-sample-cotswolds": {
       id: "trip-sample-cotswolds",
       name: "Cotswolds Weekend Getaway",
-      pin: "0000",
       currency: "£",
       members: ["Anil", "Priya", "Sam", "Maya"],
       expenses: [
@@ -134,13 +136,11 @@ async function loadAllTrips() {
     if (res.ok) {
       const data = await res.json();
       if (data && Array.isArray(data.trips)) {
-        // Merge summary metadata with local full records
         for (const summary of data.trips) {
           if (!allTripsMap[summary.id]) {
             allTripsMap[summary.id] = {
               id: summary.id,
               name: summary.name,
-              pin: "0000",
               currency: summary.currency || "£",
               members: summary.members || [],
               expenses: [],
@@ -156,19 +156,19 @@ async function loadAllTrips() {
       }
     }
   } catch (_) {
-    // Offline or standalone static mode — localTripsMap is already loaded
+    // Offline or standalone static mode
   }
   renderHomeTripsList();
 }
 
-async function syncTripToServer(tripObj, pinStr) {
+async function syncTripToServer(tripObj) {
   allTripsMap[tripObj.id] = tripObj;
   saveLocalTripsMap(allTripsMap);
   try {
     await fetch(`/api/trips/${encodeURIComponent(tripObj.id)}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ trip: tripObj, pin: pinStr || tripObj.pin || "0000" })
+      body: JSON.stringify({ trip: tripObj })
     });
   } catch (_) {
     // Ignore network error in offline mode
@@ -237,7 +237,6 @@ async function handleCreateTrip(event) {
   addDraftMemberFromInput();
 
   const nameInput = document.getElementById("tripNameInput");
-  const pinInput = document.getElementById("tripPinInput");
   const currencyInput = document.getElementById("tripCurrencyInput");
 
   const tripName = (nameInput.value || "").trim();
@@ -251,7 +250,6 @@ async function handleCreateTrip(event) {
     return;
   }
 
-  const pinValue = (pinInput.value || "").trim() || "0000";
   const currencyValue = (currencyInput.value || "£").trim() || "£";
   const newTripId = "trip-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 6);
   const nowIso = new Date().toISOString();
@@ -259,7 +257,6 @@ async function handleCreateTrip(event) {
   let createdTrip = {
     id: newTripId,
     name: tripName,
-    pin: pinValue,
     currency: currencyValue,
     members: [...draftMembers],
     expenses: [],
@@ -276,7 +273,6 @@ async function handleCreateTrip(event) {
         id: newTripId,
         name: tripName,
         members: draftMembers,
-        pin: pinValue,
         currency: currencyValue
       })
     });
@@ -293,14 +289,13 @@ async function handleCreateTrip(event) {
   allTripsMap[createdTrip.id] = createdTrip;
   saveLocalTripsMap(allTripsMap);
 
-  // Reset form (PIN starts as 0000)
+  // Reset form
   nameInput.value = "";
-  pinInput.value = "0000";
   draftMembers = [];
   renderDraftMembers();
   renderHomeTripsList();
 
-  showToast(`Trip "${createdTrip.name}" created! Click it on the list and enter PIN (${createdTrip.pin}) to open.`, "success");
+  showToast(`Trip "${createdTrip.name}" created! Click it on the list to open.`, "success");
 }
 
 function renderHomeTripsList() {
@@ -338,7 +333,7 @@ function renderHomeTripsList() {
 
     return `
       <div
-        onclick="openPinModal('${escapeAttr(trip.id)}')"
+        onclick="openTrip('${escapeAttr(trip.id)}')"
         class="group bg-white hover:bg-indigo-50/30 rounded-2xl border border-slate-200 hover:border-indigo-400 p-5 card-shadow transition cursor-pointer flex flex-col justify-between space-y-4"
       >
         <div class="space-y-2.5">
@@ -346,9 +341,9 @@ function renderHomeTripsList() {
             <h3 class="text-base font-extrabold text-slate-900 group-hover:text-indigo-700 transition">
               ${escapeHtml(trip.name)}
             </h3>
-            <span class="inline-flex items-center space-x-1 text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200 shrink-0">
-              <i class="ph-bold ph-lock-key"></i>
-              <span>PIN</span>
+            <span class="inline-flex items-center space-x-1 text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200 shrink-0">
+              <i class="ph-bold ph-users"></i>
+              <span>${members.length}</span>
             </span>
           </div>
 
@@ -367,7 +362,7 @@ function renderHomeTripsList() {
             <span> across ${expCount} expense${expCount === 1 ? "" : "s"}</span>
           </div>
           <span class="inline-flex items-center space-x-1 text-xs font-bold text-indigo-600 group-hover:translate-x-0.5 transition">
-            <span>Enter PIN</span>
+            <span>Open Trip</span>
             <i class="ph-bold ph-arrow-right"></i>
           </span>
         </div>
@@ -376,106 +371,36 @@ function renderHomeTripsList() {
   }).join("");
 }
 
-// ----------------- 2. PIN PROMPT MODAL TO OPEN A TRIP -----------------
+// ----------------- 2. OPEN A TRIP DIRECTLY -----------------
 
-function openPinModal(tripId) {
-  const trip = allTripsMap[tripId];
-  if (!trip) return;
+async function openTrip(tripId) {
+  let localTrip = allTripsMap[tripId];
 
-  pendingUnlockTripId = tripId;
-  const modal = document.getElementById("pinModal");
-  const title = document.getElementById("pinModalTripName");
-  const input = document.getElementById("unlockPinInput");
-  const err = document.getElementById("pinModalError");
-
-  if (title) title.textContent = trip.name;
-  if (err) {
-    err.classList.add("hidden");
-    err.textContent = "";
-  }
-  if (input) {
-    input.value = "";
-  }
-  if (modal) {
-    modal.classList.remove("hidden");
-    setTimeout(() => input && input.focus(), 50);
-  }
-}
-
-function closePinModal() {
-  pendingUnlockTripId = null;
-  const modal = document.getElementById("pinModal");
-  if (modal) modal.classList.add("hidden");
-}
-
-async function submitPinModal(event) {
-  event.preventDefault();
-  if (!pendingUnlockTripId) return;
-
-  const input = document.getElementById("unlockPinInput");
-  const err = document.getElementById("pinModalError");
-  const enteredPin = (input ? input.value : "").trim();
-  const localTrip = allTripsMap[pendingUnlockTripId];
-
-  // 1. Try server verification first if server has this trip
   try {
-    const res = await fetch(`/api/trips/${encodeURIComponent(pendingUnlockTripId)}/open`, {
+    const res = await fetch(`/api/trips/${encodeURIComponent(tripId)}/open`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ pin: enteredPin })
+      body: JSON.stringify({})
     });
-
-    if (res.status === 401) {
-      if (err) {
-        err.textContent = "Incorrect PIN for this trip. Please try again.";
-        err.classList.remove("hidden");
-      }
-      if (input) input.select();
-      return;
-    }
-
     if (res.ok) {
       const data = await res.json();
       if (data && data.trip) {
-        // Keep local receipt photos if server didn't have them
         if (localTrip && Array.isArray(localTrip.expenses) && localTrip.expenses.length >= (data.trip.expenses || []).length) {
-          allTripsMap[pendingUnlockTripId] = localTrip;
+          allTripsMap[tripId] = localTrip;
         } else {
-          allTripsMap[pendingUnlockTripId] = data.trip;
+          allTripsMap[tripId] = data.trip;
         }
         saveLocalTripsMap(allTripsMap);
-        openUnlockedTrip(allTripsMap[pendingUnlockTripId], enteredPin);
-        return;
       }
     }
   } catch (_) {
-    // Offline fallback verification below
+    // Use localTrip in offline mode
   }
 
-  // 2. Local verification
-  if (!localTrip) {
-    closePinModal();
-    return;
-  }
+  const tripObj = allTripsMap[tripId];
+  if (!tripObj) return;
 
-  const expectedPin = String(localTrip.pin || "0000").trim();
-  if (enteredPin !== expectedPin) {
-    if (err) {
-      err.textContent = "Incorrect PIN for this trip. Please try again.";
-      err.classList.remove("hidden");
-    }
-    if (input) input.select();
-    return;
-  }
-
-  openUnlockedTrip(localTrip, enteredPin);
-}
-
-function openUnlockedTrip(tripObj, pinStr) {
   activeTrip = tripObj;
-  unlockedPin = pinStr;
-  closePinModal();
-
   document.getElementById("homeView").classList.add("hidden");
   document.getElementById("tripView").classList.remove("hidden");
   document.getElementById("headerBackHomeBtn").classList.remove("hidden");
@@ -485,9 +410,8 @@ function openUnlockedTrip(tripObj, pinStr) {
   renderActiveTripDashboard();
 }
 
-function goHomeAndLock() {
+function goHome() {
   activeTrip = null;
-  unlockedPin = null;
   document.getElementById("tripView").classList.add("hidden");
   document.getElementById("homeView").classList.remove("hidden");
   document.getElementById("headerBackHomeBtn").classList.add("hidden");
@@ -495,7 +419,133 @@ function goHomeAndLock() {
   renderHomeTripsList();
 }
 
-// ----------------- 3. ADD AN EXPENSE BY HAND -----------------
+// ----------------- 3. CAMERA SNAPSHOT MODAL (FOR MANUAL BILL OR AI SCAN) -----------------
+
+async function openCameraModal(targetMode = "manual") {
+  cameraTargetMode = targetMode;
+
+  // Check if browser supports live getUserMedia camera capture
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    triggerFallbackCameraInput(targetMode);
+    return;
+  }
+
+  const modal = document.getElementById("cameraModal");
+  const errEl = document.getElementById("cameraErrorMsg");
+  if (errEl) {
+    errEl.classList.add("hidden");
+    errEl.textContent = "";
+  }
+  if (modal) modal.classList.remove("hidden");
+
+  await startCameraStream();
+}
+
+async function startCameraStream() {
+  stopCameraStream();
+  const video = document.getElementById("cameraVideoStream");
+  const errEl = document.getElementById("cameraErrorMsg");
+
+  try {
+    cameraStream = await navigator.mediaDevices.getUserMedia({
+      video: {
+        facingMode: { ideal: cameraFacingMode },
+        width: { ideal: 1280 },
+        height: { ideal: 960 }
+      },
+      audio: false
+    });
+    if (video) {
+      video.srcObject = cameraStream;
+      video.classList.remove("hidden");
+      await video.play();
+    }
+  } catch (err) {
+    console.warn("Webcam stream unavailable, falling back to file/camera input:", err);
+    closeCameraModal();
+    triggerFallbackCameraInput(cameraTargetMode);
+  }
+}
+
+function stopCameraStream() {
+  if (cameraStream) {
+    cameraStream.getTracks().forEach(t => t.stop());
+    cameraStream = null;
+  }
+  const video = document.getElementById("cameraVideoStream");
+  if (video) video.srcObject = null;
+}
+
+function closeCameraModal() {
+  stopCameraStream();
+  const modal = document.getElementById("cameraModal");
+  if (modal) modal.classList.add("hidden");
+}
+
+async function switchCameraFacingMode() {
+  cameraFacingMode = cameraFacingMode === "environment" ? "user" : "environment";
+  await startCameraStream();
+}
+
+function triggerFallbackCameraInput(targetMode) {
+  const inputId = targetMode === "scan" ? "scanCameraFallbackInput" : "manualCameraFallbackInput";
+  const input = document.getElementById(inputId);
+  if (input) input.click();
+}
+
+async function captureBillSnapshot() {
+  const video = document.getElementById("cameraVideoStream");
+  if (!video || !video.videoWidth) {
+    closeCameraModal();
+    triggerFallbackCameraInput(cameraTargetMode);
+    return;
+  }
+
+  const maxDim = 1100;
+  let width = video.videoWidth;
+  let height = video.videoHeight;
+  if (width > maxDim || height > maxDim) {
+    if (width > height) {
+      height = Math.round((height * maxDim) / width);
+      width = maxDim;
+    } else {
+      width = Math.round((width * maxDim) / height);
+      height = maxDim;
+    }
+  }
+
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d");
+  ctx.drawImage(video, 0, 0, width, height);
+
+  const dataUrl = canvas.toDataURL("image/jpeg", 0.82);
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+  const filename = `bill_snapshot_${stamp}.jpg`;
+
+  closeCameraModal();
+
+  if (cameraTargetMode === "manual") {
+    manualPhotoDataUrl = dataUrl;
+    manualPhotoName = filename;
+    document.getElementById("manualPhotoPreviewImg").src = manualPhotoDataUrl;
+    document.getElementById("manualPhotoPreviewName").textContent = filename;
+    document.getElementById("manualPhotoPreviewBox").classList.remove("hidden");
+    document.getElementById("manualBillPhotoLabel").textContent = "Change Photo";
+    showToast("Bill snapshot captured and attached!", "success");
+  } else {
+    // Convert dataUrl to a File object and add to AI Scan queue
+    const res = await fetch(dataUrl);
+    const blob = await res.blob();
+    const fileObj = new File([blob], filename, { type: "image/jpeg" });
+    selectedScanFiles.push(fileObj);
+    renderScanFilesQueue();
+    showToast("Bill snapshot captured! Click 'Scan & Split Between Everyone' or take another snapshot.", "success");
+  }
+}
+
+// ----------------- 4. ADD AN EXPENSE BY HAND -----------------
 
 function switchExpenseTab(mode) {
   const manualForm = document.getElementById("manualExpenseForm");
@@ -594,17 +644,14 @@ function updateManualSplitPreview() {
 
 async function handleManualPhotoChange(event) {
   const file = event.target.files && event.target.files[0];
-  if (!file) {
-    clearManualPhoto();
-    return;
-  }
+  if (!file) return;
   try {
     manualPhotoDataUrl = await readAndCompressImage(file, 900, 0.78);
     manualPhotoName = file.name;
     document.getElementById("manualPhotoPreviewImg").src = manualPhotoDataUrl;
     document.getElementById("manualPhotoPreviewName").textContent = file.name;
     document.getElementById("manualPhotoPreviewBox").classList.remove("hidden");
-    document.getElementById("manualBillPhotoLabel").textContent = file.name;
+    document.getElementById("manualBillPhotoLabel").textContent = "Change Photo";
   } catch (err) {
     console.warn("Failed reading photo:", err);
   }
@@ -615,10 +662,12 @@ function clearManualPhoto() {
   manualPhotoName = null;
   const fileInput = document.getElementById("manualBillPhoto");
   if (fileInput) fileInput.value = "";
+  const camInput = document.getElementById("manualCameraFallbackInput");
+  if (camInput) camInput.value = "";
   const previewBox = document.getElementById("manualPhotoPreviewBox");
   if (previewBox) previewBox.classList.add("hidden");
   const label = document.getElementById("manualBillPhotoLabel");
-  if (label) label.textContent = "Attach a photo of the bill (optional)...";
+  if (label) label.textContent = "Upload Photo";
 }
 
 async function handleAddManualExpense(event) {
@@ -663,7 +712,7 @@ async function handleAddManualExpense(event) {
   if (!Array.isArray(activeTrip.expenses)) activeTrip.expenses = [];
   activeTrip.expenses.unshift(newExpense);
 
-  await syncTripToServer(activeTrip, unlockedPin);
+  await syncTripToServer(activeTrip);
 
   // Reset form fields
   document.getElementById("manualAmount").value = "";
@@ -676,12 +725,15 @@ async function handleAddManualExpense(event) {
   showToast(`Added "${newExpense.description}" (${cur}${newExpense.amount.toFixed(2)}) paid by ${newExpense.paid_by}.`, "success");
 }
 
-// ----------------- 4. SCAN RECEIPTS WITH AI (PHOTOS OR PDFS) -----------------
+// ----------------- 5. SCAN RECEIPTS WITH AI (SNAPSHOT, PHOTOS OR PDFS) -----------------
 
 function handleScanFilesSelected(event) {
-  const files = Array.from(event.target.files || []);
-  selectedScanFiles = files;
-  renderScanFilesQueue();
+  const incoming = Array.from(event.target.files || []);
+  if (incoming.length > 0) {
+    selectedScanFiles.push(...incoming);
+    renderScanFilesQueue();
+  }
+  event.target.value = "";
 }
 
 function removeScanFileAt(idx) {
@@ -702,7 +754,10 @@ function renderScanFilesQueue() {
   listEl.classList.remove("hidden");
   listEl.innerHTML = selectedScanFiles.map((file, idx) => {
     const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
-    const icon = isPdf ? "ph-file-pdf text-rose-600" : "ph-image text-violet-600";
+    const isSnapshot = file.name.startsWith("bill_snapshot_");
+    const icon = isPdf
+      ? "ph-file-pdf text-rose-600"
+      : (isSnapshot ? "ph-camera text-indigo-600" : "ph-image text-violet-600");
     const sizeKb = Math.max(1, Math.round(file.size / 1024));
     return `
       <div class="flex items-center justify-between px-3 py-2 rounded-lg bg-white border border-slate-200 text-xs">
@@ -729,7 +784,7 @@ async function handleScanReceipts(event) {
     return;
   }
   if (selectedScanFiles.length === 0) {
-    showToast("Please select one or more receipt photos or PDFs to scan.", "error");
+    showToast("Please take a snapshot or upload at least one receipt photo or PDF to scan.", "error");
     return;
   }
 
@@ -740,7 +795,7 @@ async function handleScanReceipts(event) {
   submitBtnText.textContent = `AI Scanning ${selectedScanFiles.length} file(s)...`;
 
   try {
-    // Prepare image previews and base64 payloads for all uploaded files (photos & PDFs)
+    // Prepare image previews and base64 payloads for all uploaded/captured files
     const previewMap = {};
     const filesPayload = [];
     for (const f of selectedScanFiles) {
@@ -786,7 +841,6 @@ async function handleScanReceipts(event) {
         throw new Error("Server scan endpoint returned status " + res.status);
       }
     } catch (_) {
-      // Offline / static fallback: parse files locally
       scannedReceipts = await clientFallbackScanReceipts(selectedScanFiles);
       statusMessage = `Scanned ${scannedReceipts.length} receipt(s) and split each between everyone!`;
     }
@@ -811,7 +865,7 @@ async function handleScanReceipts(event) {
       activeTrip.expenses.unshift(exp);
     }
 
-    await syncTripToServer(activeTrip, unlockedPin);
+    await syncTripToServer(activeTrip);
 
     // Clear selected files
     selectedScanFiles = [];
@@ -864,7 +918,7 @@ async function deleteExpense(expenseId, prefillManual = false) {
   const removed = activeTrip.expenses[idx];
   activeTrip.expenses.splice(idx, 1);
 
-  await syncTripToServer(activeTrip, unlockedPin);
+  await syncTripToServer(activeTrip);
   renderActiveTripDashboard();
 
   if (prefillManual) {
@@ -874,6 +928,13 @@ async function deleteExpense(expenseId, prefillManual = false) {
     document.getElementById("manualCategory").value = CATEGORY_META[removed.category] ? removed.category : "Other";
     document.getElementById("manualDate").value = removed.date || new Date().toISOString().split("T")[0];
     document.getElementById("manualDescription").value = removed.description || "";
+    if (removed.receipt_data_url) {
+      manualPhotoDataUrl = removed.receipt_data_url;
+      manualPhotoName = removed.receipt_name || "bill_photo.jpg";
+      document.getElementById("manualPhotoPreviewImg").src = manualPhotoDataUrl;
+      document.getElementById("manualPhotoPreviewName").textContent = manualPhotoName;
+      document.getElementById("manualPhotoPreviewBox").classList.remove("hidden");
+    }
     updateManualSplitPreview();
     showToast(`Deleted scanned bill "${removed.description}" and pre-filled it in Add by Hand so you can tick who shared it!`, "info");
   } else {
@@ -881,12 +942,8 @@ async function deleteExpense(expenseId, prefillManual = false) {
   }
 }
 
-// ----------------- 5. WHO PAYS WHOM (FEWEST PAYMENTS + MARK PAID + UNDO) -----------------
+// ----------------- 6. WHO PAYS WHOM (FEWEST PAYMENTS + MARK PAID + UNDO) -----------------
 
-/**
- * Computes net balances for each member and the strictly minimum number of payments
- * required to settle all debts.
- */
 function calculateSettlementPlan(trip) {
   const members = Array.isArray(trip.members) ? trip.members : [];
   const expenses = Array.isArray(trip.expenses) ? trip.expenses : [];
@@ -895,7 +952,6 @@ function calculateSettlementPlan(trip) {
   const netFloat = {};
   for (const m of members) netFloat[m] = 0;
 
-  // 1. Apply all shared expenses
   for (const exp of expenses) {
     const amt = Number(exp.amount) || 0;
     if (amt <= 0) continue;
@@ -915,17 +971,15 @@ function calculateSettlementPlan(trip) {
     }
   }
 
-  // 2. Apply already marked-paid settlements from the payments list
   for (const pay of payments) {
     const pAmt = Number(pay.amount) || 0;
     if (pAmt <= 0) continue;
     if (netFloat[pay.from] === undefined) netFloat[pay.from] = 0;
     if (netFloat[pay.to] === undefined) netFloat[pay.to] = 0;
-    netFloat[pay.from] += pAmt; // Debtor paid money -> owes less
-    netFloat[pay.to] -= pAmt;   // Creditor received money -> is owed less
+    netFloat[pay.from] += pAmt;
+    netFloat[pay.to] -= pAmt;
   }
 
-  // Convert to integer cents to guarantee zero floating-point drift
   const netCents = {};
   let sumCents = 0;
   let maxPerson = members[0] || null;
@@ -949,18 +1003,15 @@ function calculateSettlementPlan(trip) {
     else if (cents > 1) creditors.push({ person, cents });
   }
 
-  // Sort largest first
   debtors.sort((a, b) => b.cents - a.cents);
   creditors.sort((a, b) => b.cents - a.cents);
 
-  // Optimal Minimum Cash Flow solver (backtracking search for strictly fewest transactions)
   function solveMinTransactions(debList, credList) {
     const dFiltered = debList.filter(d => d.cents > 1).sort((a, b) => b.cents - a.cents);
     const cFiltered = credList.filter(c => c.cents > 1).sort((a, b) => b.cents - a.cents);
 
     if (dFiltered.length === 0 || cFiltered.length === 0) return [];
 
-    // Fast path: if any debtor and creditor have the exact same amount, settling them together is always optimal
     for (let i = 0; i < dFiltered.length; i++) {
       for (let j = 0; j < cFiltered.length; j++) {
         if (dFiltered[i].cents === cFiltered[j].cents) {
@@ -975,7 +1026,6 @@ function calculateSettlementPlan(trip) {
       }
     }
 
-    // Branch on the largest debtor against each creditor (for group size <= 10)
     const firstDebtor = dFiltered[0];
     if (dFiltered.length + cFiltered.length <= 12) {
       let bestSolution = null;
@@ -994,7 +1044,6 @@ function calculateSettlementPlan(trip) {
       return bestSolution || [];
     }
 
-    // Greedy fallback for huge groups (>12 active non-zero balances)
     const cred = cFiltered[0];
     const transfer = Math.min(firstDebtor.cents, cred.cents);
     const nextD = dFiltered.map((x, idx) => idx === 0 ? { ...x, cents: x.cents - transfer } : { ...x });
@@ -1033,7 +1082,7 @@ async function markSettlementPaid(fromPerson, toPerson, amount) {
   };
 
   activeTrip.payments.unshift(paymentRecord);
-  await syncTripToServer(activeTrip, unlockedPin);
+  await syncTripToServer(activeTrip);
   renderActiveTripDashboard();
 
   const cur = activeTrip.currency || "£";
@@ -1048,7 +1097,7 @@ async function undoPayment(paymentId) {
   const undone = activeTrip.payments[idx];
   activeTrip.payments.splice(idx, 1);
 
-  await syncTripToServer(activeTrip, unlockedPin);
+  await syncTripToServer(activeTrip);
   renderActiveTripDashboard();
 
   const cur = activeTrip.currency || "£";
@@ -1065,7 +1114,6 @@ function renderActiveTripDashboard() {
   const payments = Array.isArray(activeTrip.payments) ? activeTrip.payments : [];
   const members = Array.isArray(activeTrip.members) ? activeTrip.members : [];
 
-  // Header summary
   document.getElementById("activeTripTitle").textContent = activeTrip.name;
   const totalSpend = expenses.reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
   document.getElementById("activeTripTotalSpend").textContent = `${cur}${totalSpend.toFixed(2)}`;
@@ -1081,7 +1129,6 @@ function renderActiveTripDashboard() {
     `).join("");
   }
 
-  // Who Pays Whom & Member Balances
   const { memberBalances, settlements } = calculateSettlementPlan(activeTrip);
 
   const balancesGrid = document.getElementById("memberBalancesGrid");
@@ -1154,7 +1201,6 @@ function renderActiveTripDashboard() {
     }
   }
 
-  // Recorded Payments List (with Undo)
   const paymentsBadge = document.getElementById("paymentsCountBadge");
   const paymentsListEl = document.getElementById("recordedPaymentsList");
   if (paymentsBadge) paymentsBadge.textContent = String(payments.length);
@@ -1192,7 +1238,6 @@ function renderActiveTripDashboard() {
     }
   }
 
-  // Render All Trip Expenses List
   const expensesContainer = document.getElementById("expensesListContainer");
   if (!expensesContainer) return;
 
@@ -1203,7 +1248,7 @@ function renderActiveTripDashboard() {
           <i class="ph-bold ph-receipt"></i>
         </div>
         <p class="text-sm font-bold text-slate-700">No expenses logged yet</p>
-        <p class="text-xs text-slate-400">Add an expense by hand or scan receipt photos/PDFs on the left.</p>
+        <p class="text-xs text-slate-400">Add an expense by hand or scan receipt snapshots/photos/PDFs on the left.</p>
       </div>
     `;
     return;
@@ -1293,7 +1338,7 @@ function renderActiveTripDashboard() {
   }).join("");
 }
 
-// ----------------- 6. EXPORT CSV (DOWNLOAD ALL EXPENSES AS SPREADSHEET) -----------------
+// ----------------- 7. EXPORT CSV (DOWNLOAD ALL EXPENSES AS SPREADSHEET) -----------------
 
 function exportExpensesCSV() {
   if (!activeTrip) {
@@ -1339,7 +1384,6 @@ function exportExpensesCSV() {
     ...rows.map(r => r.map(csvEscape).join(","))
   ];
 
-  // Prepend UTF-8 BOM (\uFEFF) so Microsoft Excel opens £/€/₹ symbols cleanly
   const csvContent = "\uFEFF" + csvLines.join("\r\n");
   const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
   const url = URL.createObjectURL(blob);

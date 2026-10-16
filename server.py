@@ -261,57 +261,35 @@ def create_trip(req: CreateTripRequest):
 
 
 @api_router.post("/trips/{trip_id}/open")
-def open_trip(trip_id: str, req: VerifyPinRequest):
-    """Verifies the trip's PIN before returning the full trip details."""
+@api_router.get("/trips/{trip_id}/open")
+def open_trip(trip_id: str):
+    """Returns the full trip details."""
     trips = get_stored_trips()
     trip = trips.get(trip_id)
     if not trip:
         raise HTTPException(status_code=404, detail="Trip not found.")
-
-    expected_pin = str(trip.get("pin", "0000")).strip()
-    provided_pin = str(req.pin or "").strip()
-
-    if provided_pin != expected_pin:
-        raise HTTPException(status_code=401, detail="Incorrect PIN. Please try again.")
-
     return {"status": "success", "trip": trip}
 
 
 @api_router.put("/trips/{trip_id}")
 def update_trip(trip_id: str, req: SyncTripRequest):
-    """Saves updated expenses, payments, or settings for an unlocked trip."""
+    """Saves updated expenses, payments, or settings for a trip."""
     trips = get_stored_trips()
-    existing = trips.get(trip_id)
     incoming = req.trip or {}
-
-    if existing:
-        expected_pin = str(existing.get("pin", "0000")).strip()
-        provided_pin = str(req.pin if req.pin is not None else incoming.get("pin", "")).strip()
-        if provided_pin and provided_pin != expected_pin:
-            raise HTTPException(status_code=401, detail="Incorrect PIN for updating trip.")
-
     now_iso = datetime.datetime.now().isoformat()
     incoming["id"] = trip_id
     incoming["updated_at"] = now_iso
-    if not incoming.get("pin"):
-        incoming["pin"] = existing.get("pin", "0000") if existing else "0000"
-
     trips[trip_id] = incoming
     save_stored_trips(trips)
     return {"status": "success", "trip": incoming}
 
 
 @api_router.delete("/trips/{trip_id}")
-def delete_trip(trip_id: str, pin: Optional[str] = None):
+def delete_trip(trip_id: str):
     trips = get_stored_trips()
     existing = trips.get(trip_id)
     if not existing:
         raise HTTPException(status_code=404, detail="Trip not found.")
-
-    expected_pin = str(existing.get("pin", "0000")).strip()
-    if pin is not None and str(pin).strip() != expected_pin:
-        raise HTTPException(status_code=401, detail="Incorrect PIN to delete trip.")
-
     del trips[trip_id]
     save_stored_trips(trips)
     return {"status": "success", "deleted_id": trip_id}

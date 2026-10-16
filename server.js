@@ -402,17 +402,11 @@ const server = http.createServer(async (req, res) => {
   }
 
   const openMatch = reqUrl.match(/^\/api\/trips\/([^/]+)\/open$/);
-  if (openMatch && req.method === 'POST') {
+  if (openMatch && (req.method === 'POST' || req.method === 'GET')) {
     const tripId = decodeURIComponent(openMatch[1]);
     const trips = getStoredTrips();
     const trip = trips[tripId];
     if (!trip) return sendJson(res, 404, { detail: 'Trip not found.' });
-    const body = await readJsonBody(req);
-    const providedPin = String(body.pin || '').trim();
-    const expectedPin = String(trip.pin || '0000').trim();
-    if (providedPin !== expectedPin) {
-      return sendJson(res, 401, { detail: 'Incorrect PIN. Please try again.' });
-    }
     return sendJson(res, 200, { status: 'success', trip });
   }
 
@@ -420,19 +414,10 @@ const server = http.createServer(async (req, res) => {
   if (updateMatch && req.method === 'PUT') {
     const tripId = decodeURIComponent(updateMatch[1]);
     const trips = getStoredTrips();
-    const existing = trips[tripId];
     const body = await readJsonBody(req);
     const incoming = body.trip || {};
-    if (existing) {
-      const expectedPin = String(existing.pin || '0000').trim();
-      const providedPin = String(body.pin ?? incoming.pin ?? '').trim();
-      if (providedPin && providedPin !== expectedPin) {
-        return sendJson(res, 401, { detail: 'Incorrect PIN.' });
-      }
-    }
     incoming.id = tripId;
     incoming.updated_at = new Date().toISOString();
-    if (!incoming.pin) incoming.pin = existing ? existing.pin : '0000';
     trips[tripId] = incoming;
     saveStoredTrips(trips);
     return sendJson(res, 200, { status: 'success', trip: incoming });
@@ -508,7 +493,7 @@ if (require.main === module) {
   server.listen(PORT, '127.0.0.1', () => {
     const url = `http://127.0.0.1:${PORT}`;
     console.log('================================================================');
-    console.log('  TripSplit AI — Group Trip Expense Splitter & Receipt Scanner  ');
+    console.log('  Trip Split Expense — Group Trip Expense Splitter & OCR        ');
     console.log(`  Running locally on: ${url}`);
     console.log('================================================================\n');
 

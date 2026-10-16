@@ -1,4 +1,4 @@
-name: Verify & Test TripSplit AI
+name: Verify & Test Trip Split Expense
 
 on:
   push:
@@ -33,25 +33,18 @@ jobs:
                 const createRes = await (await fetch(base + '/api/trips', {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ name: 'CI Test Trip', members: ['Alice', 'Bob', 'Charlie'], pin: '0000' })
+                  body: JSON.stringify({ name: 'CI Test Trip', members: ['Alice', 'Bob', 'Charlie'] })
                 })).json();
                 const tid = createRes.trip.id;
 
-                const wrongPin = await fetch(base + '/api/trips/' + tid + '/open', {
+                const openRes = await fetch(base + '/api/trips/' + tid + '/open', {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ pin: '1234' })
+                  body: JSON.stringify({})
                 });
-                if (wrongPin.status !== 401) throw new Error('Expected 401 for wrong PIN');
+                if (openRes.status !== 200) throw new Error('Expected 200 opening trip');
 
-                const rightPin = await fetch(base + '/api/trips/' + tid + '/open', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ pin: '0000' })
-                });
-                if (rightPin.status !== 200) throw new Error('Expected 200 for right PIN');
-
-                console.log('TripSplit AI CI checks passed!');
+                console.log('Trip Split Expense CI checks passed!');
               } catch (err) {
                 console.error(err);
                 process.exitCode = 1;

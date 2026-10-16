@@ -1,17 +1,17 @@
-# TripSplit AI — Group Trip Expense Splitter & Receipt Scanner
+# Trip Split Expense — Group Trip Expense Splitter & Receipt Scanner
 
-A fast, PIN-protected group trip expense manager with AI receipt scanning (photos & PDFs), minimum-payment settlement calculation, and CSV spreadsheet export.
+A fast group trip expense manager with camera snapshot capture, AI receipt scanning (photos & PDFs), minimum-payment settlement calculation, and CSV spreadsheet export.
 
 ## Core Features
 
-1. **Create a Trip & PIN Lock**:
-   - Give your trip a name, add everyone's names, and set a PIN (starts as `0000`).
-   - All trips are listed on the home page, and each trip asks for its PIN before opening.
+1. **Create a Trip**:
+   - Give your trip a name and add everyone's names.
+   - All trips are listed on the home page — click any trip to open it immediately.
 2. **Add an Expense by Hand**:
    - Pick who paid from the group list, enter the amount, choose a category (`Food & Drink`, `Transport`, `Accommodation`, `Groceries`, `Activities`, `Shopping`, `Other`), and tick who shared it.
-   - Attaching a photo of the bill is optional (and can be viewed anytime from the expense list).
+   - Optional bill photo: **Take a Snapshot** directly with your camera or **Upload a Photo** from your device.
 3. **Scan Receipts (AI)**:
-   - Choose who paid, then upload one or more photos or PDFs.
+   - Choose who paid, then **Take a Snapshot** of the bill or **Upload one or more photos or PDFs**.
    - Gemini Vision / Document AI reads each receipt's **total, description, category, and date**, then adds it as an expense split equally between everyone.
    - *To change who shared a scanned bill, delete it and add it again by hand (or click "Delete & Re-add by Hand").*
 4. **Who Pays Whom (Fewest Payments)**:
@@ -26,7 +26,7 @@ Double-click `run_trip_splitter.bat` or run:
 
 ```bash
 cd trip-expense-splitter
-python server.py
+node server.js
 ```
 
-Then open `http://localhost:8080`.
+Then open `http://127.0.0.1:8080`.

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>TripSplit AI — Group Trip Expense Splitter & Receipt Scanner</title>
+  <title>Trip Split Expense — Group Trip Expense Splitter &amp; Receipt Scanner</title>
   <!-- Tailwind CSS CDN -->
   <script src="https://cdn.tailwindcss.com"></script>
   <!-- Phosphor Icons -->
@@ -17,13 +17,13 @@
     <div class="max-w-6xl mx-auto px-4 sm:px-6 py-3.5 flex flex-wrap items-center justify-between gap-3">
       
       <!-- Brand -->
-      <div class="flex items-center space-x-3 cursor-pointer" onclick="goHomeAndLock()">
+      <div class="flex items-center space-x-3 cursor-pointer" onclick="goHome()">
         <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-600 to-violet-500 text-white flex items-center justify-center text-2xl shadow-sm">
           <i class="ph-bold ph-airplane-tilt"></i>
         </div>
         <div>
           <div class="flex items-center space-x-2">
-            <h1 class="text-lg sm:text-xl font-extrabold text-slate-900 tracking-tight">TripSplit AI</h1>
+            <h1 class="text-lg sm:text-xl font-extrabold text-slate-900 tracking-tight">Trip Split Expense</h1>
             <span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-800 uppercase tracking-wider">Receipt OCR</span>
           </div>
           <p class="text-xs text-slate-500">Group Trip Expense Splitter &amp; Smart Settle-Up</p>
@@ -33,9 +33,9 @@
       <!-- Right Controls -->
       <div class="flex items-center space-x-2.5">
         <!-- Shown only when inside an open trip -->
-        <button id="headerBackHomeBtn" onclick="goHomeAndLock()" class="hidden text-xs font-semibold flex items-center space-x-1.5 px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 transition cursor-pointer">
-          <i class="ph-bold ph-lock-key text-slate-600"></i>
-          <span>All Trips (Lock)</span>
+        <button id="headerBackHomeBtn" onclick="goHome()" class="hidden text-xs font-semibold flex items-center space-x-1.5 px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 transition cursor-pointer">
+          <i class="ph-bold ph-folders text-slate-600"></i>
+          <span>All Trips</span>
         </button>
 
         <button id="headerExportCsvBtn" onclick="exportExpensesCSV()" class="hidden text-xs font-semibold flex items-center space-x-1.5 px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white transition shadow-xs cursor-pointer">
@@ -69,7 +69,7 @@
     </div>
 
     <!-- ===================================================================== -->
-    <!-- VIEW 1: HOME PAGE (CREATE A TRIP + LIST OF ALL PIN-PROTECTED TRIPS)  -->
+    <!-- VIEW 1: HOME PAGE (CREATE A TRIP + LIST OF ALL TRIPS)                 -->
     <!-- ===================================================================== -->
     <section id="homeView" class="space-y-8 animate-fade-in">
 
@@ -82,7 +82,7 @@
               <i class="ph-bold ph-plus-circle text-xl"></i>
               <h2 class="text-base font-bold">Create a Trip</h2>
             </div>
-            <p class="text-xs text-indigo-100 mt-0.5">Give it a name, add everyone's names, and set a PIN (starts as 0000).</p>
+            <p class="text-xs text-indigo-100 mt-0.5">Give your trip a name and add everyone's names to start splitting expenses.</p>
           </div>
 
           <form id="createTripForm" onsubmit="handleCreateTrip(event)" class="p-6 space-y-4">
@@ -129,39 +129,20 @@
               </div>
             </div>
 
-            <!-- PIN & Currency Row -->
-            <div class="grid grid-cols-2 gap-3">
-              <div>
-                <label for="tripPinInput" class="block text-xs font-bold uppercase tracking-wider text-slate-600 mb-1.5">
-                  Trip PIN <span class="text-slate-400 font-normal">(Starts 0000)</span>
-                </label>
-                <div class="relative">
-                  <i class="ph-bold ph-lock-key absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400"></i>
-                  <input
-                    id="tripPinInput"
-                    type="text"
-                    value="0000"
-                    maxlength="12"
-                    required
-                    class="w-full pl-9 pr-3 py-2.5 rounded-xl border border-slate-300 text-sm font-bold tracking-widest text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  >
-                </div>
-              </div>
-
-              <div>
-                <label for="tripCurrencyInput" class="block text-xs font-bold uppercase tracking-wider text-slate-600 mb-1.5">
-                  Currency
-                </label>
-                <select
-                  id="tripCurrencyInput"
-                  class="w-full px-3 py-2.5 rounded-xl border border-slate-300 text-sm font-semibold bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                >
-                  <option value="£">£ GBP (Pounds)</option>
-                  <option value="€">€ EUR (Euros)</option>
-                  <option value="$">$ USD (Dollars)</option>
-                  <option value="₹">₹ INR (Rupees)</option>
-                </select>
-              </div>
+            <!-- Currency Selector -->
+            <div>
+              <label for="tripCurrencyInput" class="block text-xs font-bold uppercase tracking-wider text-slate-600 mb-1.5">
+                Currency
+              </label>
+              <select
+                id="tripCurrencyInput"
+                class="w-full px-3 py-2.5 rounded-xl border border-slate-300 text-sm font-semibold bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              >
+                <option value="£">£ GBP (Pounds)</option>
+                <option value="€">€ EUR (Euros)</option>
+                <option value="$">$ USD (Dollars)</option>
+                <option value="₹">₹ INR (Rupees)</option>
+              </select>
             </div>
 
             <button
@@ -183,7 +164,7 @@
                 <span>All Trips</span>
                 <span id="homeTripsCountBadge" class="text-xs px-2.5 py-0.5 rounded-full bg-slate-200 text-slate-700 font-bold">0</span>
               </h2>
-              <p class="text-xs text-slate-500">Select any trip below and enter its PIN to open expenses &amp; settlements.</p>
+              <p class="text-xs text-slate-500">Click any trip below to open its expenses &amp; settlements.</p>
             </div>
           </div>
 
@@ -205,15 +186,11 @@
       <div class="bg-white rounded-2xl border border-slate-200 card-shadow p-5 sm:p-6 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
         <div class="space-y-2">
           <div class="flex flex-wrap items-center gap-2.5">
-            <button onclick="goHomeAndLock()" class="inline-flex items-center space-x-1 text-xs font-bold text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 px-2.5 py-1 rounded-lg transition cursor-pointer">
+            <button onclick="goHome()" class="inline-flex items-center space-x-1 text-xs font-bold text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 px-2.5 py-1 rounded-lg transition cursor-pointer">
               <i class="ph-bold ph-arrow-left"></i>
               <span>All Trips</span>
             </button>
             <h2 id="activeTripTitle" class="text-xl sm:text-2xl font-extrabold text-slate-900">Trip Name</h2>
-            <span class="inline-flex items-center space-x-1 text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
-              <i class="ph-bold ph-lock-key-open"></i>
-              <span>PIN Unlocked</span>
-            </span>
           </div>
 
           <!-- Trip Members Pills -->
@@ -374,18 +351,34 @@
               <p id="manualSplitPreview" class="text-xs text-indigo-600 font-semibold mt-1.5"></p>
             </div>
 
-            <!-- Optional Photo of the Bill -->
+            <!-- Optional Photo of the Bill: Take a Snapshot OR Upload Photo -->
             <div>
-              <label class="block text-xs font-bold uppercase tracking-wider text-slate-600 mb-1">
-                Photo of the Bill <span class="text-slate-400 font-normal">(Optional)</span>
+              <label class="block text-xs font-bold uppercase tracking-wider text-slate-600 mb-1.5">
+                Photo of the Bill <span class="text-slate-400 font-normal">(Optional — Take a Snapshot or Upload)</span>
               </label>
-              <label for="manualBillPhoto" class="flex items-center justify-between px-3.5 py-2.5 rounded-xl border border-dashed border-slate-300 hover:border-indigo-400 bg-slate-50/60 cursor-pointer transition">
-                <div class="flex items-center space-x-2.5 overflow-hidden">
-                  <i class="ph-bold ph-camera text-indigo-600 text-lg shrink-0"></i>
-                  <span id="manualBillPhotoLabel" class="text-xs text-slate-600 truncate">Attach a photo of the bill (optional)...</span>
-                </div>
-                <span class="text-[11px] font-bold text-indigo-600 bg-indigo-50 px-2.5 py-1 rounded-lg shrink-0">Browse</span>
-              </label>
+
+              <div class="grid grid-cols-2 gap-2.5">
+                <!-- Option 1: Take a Snapshot -->
+                <button
+                  type="button"
+                  onclick="openCameraModal('manual')"
+                  class="flex items-center justify-center space-x-2 px-3 py-2.5 rounded-xl border border-indigo-200 bg-indigo-50/70 hover:bg-indigo-100 text-indigo-700 font-bold text-xs transition cursor-pointer"
+                >
+                  <i class="ph-bold ph-camera text-base"></i>
+                  <span>Take a Snapshot</span>
+                </button>
+
+                <!-- Option 2: Upload Photo -->
+                <label
+                  for="manualBillPhoto"
+                  class="flex items-center justify-center space-x-2 px-3 py-2.5 rounded-xl border border-slate-300 bg-slate-50 hover:bg-slate-100 text-slate-700 font-bold text-xs transition cursor-pointer"
+                >
+                  <i class="ph-bold ph-upload-simple text-base text-indigo-600"></i>
+                  <span id="manualBillPhotoLabel" class="truncate">Upload Photo</span>
+                </label>
+              </div>
+
+              <!-- File input for uploading from device -->
               <input
                 id="manualBillPhoto"
                 type="file"
@@ -393,11 +386,24 @@
                 onchange="handleManualPhotoChange(event)"
                 class="hidden"
               >
+              <!-- Fallback mobile camera capture input -->
+              <input
+                id="manualCameraFallbackInput"
+                type="file"
+                accept="image/*"
+                capture="environment"
+                onchange="handleManualPhotoChange(event)"
+                class="hidden"
+              >
+
               <!-- Optional Photo Preview -->
-              <div id="manualPhotoPreviewBox" class="hidden mt-2 flex items-center justify-between p-2 rounded-xl bg-slate-100 border border-slate-200">
+              <div id="manualPhotoPreviewBox" class="hidden mt-2.5 flex items-center justify-between p-2.5 rounded-xl bg-slate-100 border border-slate-200">
                 <div class="flex items-center space-x-2.5">
-                  <img id="manualPhotoPreviewImg" src="" alt="Bill preview" class="w-10 h-10 object-cover rounded-lg border border-slate-300">
-                  <span id="manualPhotoPreviewName" class="text-xs font-medium text-slate-700 truncate max-w-[180px]"></span>
+                  <img id="manualPhotoPreviewImg" src="" alt="Bill preview" class="w-11 h-11 object-cover rounded-lg border border-slate-300">
+                  <div>
+                    <span id="manualPhotoPreviewName" class="block text-xs font-bold text-slate-800 truncate max-w-[180px]"></span>
+                    <span class="text-[11px] text-emerald-700 font-semibold">Bill photo ready to attach</span>
+                  </div>
                 </div>
                 <button type="button" onclick="clearManualPhoto()" class="text-xs text-rose-600 hover:text-rose-800 font-bold px-2 py-1 cursor-pointer">
                   Remove
@@ -414,14 +420,14 @@
             </button>
           </form>
 
-          <!-- TAB 2: SCAN RECEIPTS WITH AI (PHOTOS OR PDFS) -->
+          <!-- TAB 2: SCAN RECEIPTS WITH AI (SNAPSHOT, PHOTOS OR PDFS) -->
           <form id="scanReceiptsForm" onsubmit="handleScanReceipts(event)" class="hidden p-5 sm:p-6 space-y-4">
             <div class="flex items-center justify-between">
               <h3 class="text-sm font-extrabold text-slate-900 flex items-center space-x-1.5">
                 <i class="ph-bold ph-sparkle text-violet-600"></i>
                 <span>Scan Receipts with AI</span>
               </h3>
-              <span class="text-[11px] font-bold px-2 py-0.5 rounded-full bg-violet-100 text-violet-800">Photos &amp; PDFs</span>
+              <span class="text-[11px] font-bold px-2 py-0.5 rounded-full bg-violet-100 text-violet-800">Snapshot, Photos &amp; PDFs</span>
             </div>
 
             <!-- Instruction Notice -->
@@ -431,7 +437,7 @@
                 <span>How AI Receipt Scanning works:</span>
               </p>
               <p class="text-violet-800 leading-relaxed">
-                Choose who paid, then upload one or more receipt photos or PDFs. The AI reads each <strong>total, description, category and date</strong>, then adds it as an expense <strong>split between everyone</strong>.
+                Choose who paid, then <strong>take a snapshot</strong> of the bill or <strong>upload one or more photos or PDFs</strong>. The AI reads each <strong>total, description, category and date</strong>, then adds it as an expense <strong>split between everyone</strong>.
               </p>
               <p class="text-violet-700 italic pt-0.5">
                 * To change who shared a scanned bill, delete it from the expenses list and add it again by hand.
@@ -450,21 +456,39 @@
               ></select>
             </div>
 
-            <!-- Upload One or More Photos or PDFs -->
-            <div>
-              <label class="block text-xs font-bold uppercase tracking-wider text-slate-600 mb-1">
-                Receipt Photos or PDFs <span class="text-rose-500">*</span>
+            <!-- Take a Snapshot OR Upload One or More Photos / PDFs -->
+            <div class="space-y-2.5">
+              <label class="block text-xs font-bold uppercase tracking-wider text-slate-600">
+                Capture or Upload Bill Receipts <span class="text-rose-500">*</span>
               </label>
-              <label
-                for="scanFilesInput"
-                class="flex flex-col items-center justify-center p-6 rounded-2xl border-2 border-dashed border-violet-300 hover:border-violet-500 bg-violet-50/40 hover:bg-violet-50/80 transition cursor-pointer text-center"
-              >
-                <div class="w-12 h-12 rounded-2xl bg-violet-100 text-violet-600 flex items-center justify-center text-2xl mb-2">
-                  <i class="ph-bold ph-files"></i>
-                </div>
-                <span class="text-sm font-bold text-slate-800">Click to select receipt photos or PDFs</span>
-                <span class="text-xs text-slate-500 mt-0.5">Supports multiple files at once (.jpg, .png, .webp, .pdf)</span>
-              </label>
+
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                <!-- Button 1: Take a Snapshot with Camera -->
+                <button
+                  type="button"
+                  onclick="openCameraModal('scan')"
+                  class="flex flex-col items-center justify-center p-4 rounded-2xl border-2 border-indigo-200 hover:border-indigo-400 bg-indigo-50/50 hover:bg-indigo-50 transition cursor-pointer text-center"
+                >
+                  <div class="w-10 h-10 rounded-xl bg-indigo-100 text-indigo-600 flex items-center justify-center text-xl mb-1.5">
+                    <i class="ph-bold ph-camera"></i>
+                  </div>
+                  <span class="text-xs font-extrabold text-indigo-900">Take a Snapshot</span>
+                  <span class="text-[11px] text-indigo-600 mt-0.5">Use camera to snap bill</span>
+                </button>
+
+                <!-- Button 2: Upload Photos or PDFs -->
+                <label
+                  for="scanFilesInput"
+                  class="flex flex-col items-center justify-center p-4 rounded-2xl border-2 border-dashed border-violet-300 hover:border-violet-500 bg-violet-50/40 hover:bg-violet-50/80 transition cursor-pointer text-center"
+                >
+                  <div class="w-10 h-10 rounded-xl bg-violet-100 text-violet-600 flex items-center justify-center text-xl mb-1.5">
+                    <i class="ph-bold ph-upload-simple"></i>
+                  </div>
+                  <span class="text-xs font-extrabold text-slate-800">Upload Photos / PDFs</span>
+                  <span class="text-[11px] text-slate-500 mt-0.5">Select 1 or more files</span>
+                </label>
+              </div>
+
               <input
                 id="scanFilesInput"
                 type="file"
@@ -473,8 +497,17 @@
                 onchange="handleScanFilesSelected(event)"
                 class="hidden"
               >
+              <!-- Fallback mobile camera capture input for Scan tab -->
+              <input
+                id="scanCameraFallbackInput"
+                type="file"
+                accept="image/*"
+                capture="environment"
+                onchange="handleScanFilesSelected(event)"
+                class="hidden"
+              >
 
-              <!-- Selected Files Queue -->
+              <!-- Selected / Captured Files Queue -->
               <div id="scanFilesList" class="hidden mt-3 space-y-1.5 max-h-44 overflow-y-auto p-2.5 rounded-xl bg-slate-50 border border-slate-200">
                 <!-- Populated by JS -->
               </div>
@@ -582,57 +615,55 @@
   </main>
 
   <!-- ===================================================================== -->
-  <!-- MODAL 1: PIN ENTRY MODAL TO OPEN A TRIP                               -->
+  <!-- MODAL 1: LIVE CAMERA SNAPSHOT MODAL (FOR TAKING A BILL SNAPSHOT)      -->
   <!-- ===================================================================== -->
-  <div id="pinModal" class="fixed inset-0 z-50 hidden bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-    <div class="bg-white rounded-2xl border border-slate-200 max-w-sm w-full p-6 shadow-xl space-y-5 animate-fade-in">
-      <div class="flex items-center justify-between">
-        <div class="flex items-center space-x-2.5">
-          <div class="w-10 h-10 rounded-xl bg-indigo-100 text-indigo-600 flex items-center justify-center text-xl">
-            <i class="ph-bold ph-lock-key"></i>
-          </div>
-          <div>
-            <h3 id="pinModalTripName" class="text-base font-extrabold text-slate-900">Enter Trip PIN</h3>
-            <p class="text-xs text-slate-500">Protected trip — enter PIN to open</p>
-          </div>
+  <div id="cameraModal" class="fixed inset-0 z-50 hidden bg-slate-900/80 backdrop-blur-xs flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl border border-slate-200 max-w-md w-full overflow-hidden shadow-2xl animate-fade-in">
+      <div class="px-5 py-3.5 border-b border-slate-200 flex items-center justify-between">
+        <div class="flex items-center space-x-2">
+          <i class="ph-bold ph-camera text-indigo-600 text-lg"></i>
+          <h3 class="text-sm font-extrabold text-slate-900">Take a Snapshot of the Bill</h3>
         </div>
-        <button onclick="closePinModal()" class="text-slate-400 hover:text-slate-600 cursor-pointer">
+        <button type="button" onclick="closeCameraModal()" class="text-slate-400 hover:text-slate-700 cursor-pointer">
           <i class="ph-bold ph-x text-lg"></i>
         </button>
       </div>
 
-      <form onsubmit="submitPinModal(event)" class="space-y-4">
-        <div>
-          <label for="unlockPinInput" class="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5 text-center">
-            Trip PIN (Default is 0000)
-          </label>
-          <input
-            id="unlockPinInput"
-            type="password"
-            inputmode="numeric"
-            placeholder="••••"
-            required
-            class="w-full px-4 py-3 rounded-xl border border-slate-300 text-xl font-extrabold pin-input focus:outline-none focus:ring-2 focus:ring-indigo-500"
-          >
-          <p id="pinModalError" class="hidden text-xs font-bold text-rose-600 text-center mt-2"></p>
-        </div>
+      <div class="p-4 bg-slate-950 flex flex-col items-center justify-center relative min-h-[260px]">
+        <video id="cameraVideoStream" autoplay playsinline class="w-full max-h-[55vh] rounded-xl object-contain bg-black"></video>
+        <p id="cameraErrorMsg" class="hidden text-xs text-rose-400 text-center p-4"></p>
+      </div>
 
-        <div class="flex space-x-2.5">
+      <div class="px-5 py-4 bg-slate-50 border-t border-slate-200 flex items-center justify-between gap-2.5">
+        <button
+          type="button"
+          onclick="closeCameraModal()"
+          class="px-4 py-2.5 rounded-xl bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold text-xs transition cursor-pointer"
+        >
+          Cancel
+        </button>
+
+        <div class="flex items-center space-x-2">
           <button
             type="button"
-            onclick="closePinModal()"
-            class="flex-1 py-2.5 px-4 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs transition cursor-pointer"
+            onclick="switchCameraFacingMode()"
+            class="px-3 py-2.5 rounded-xl bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 font-bold text-xs transition flex items-center space-x-1 cursor-pointer"
+            title="Switch Front/Back Camera"
           >
-            Cancel
+            <i class="ph-bold ph-camera-rotate text-sm"></i>
+            <span>Flip</span>
           </button>
+
           <button
-            type="submit"
-            class="flex-1 py-2.5 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs shadow-sm transition cursor-pointer"
+            type="button"
+            onclick="captureBillSnapshot()"
+            class="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs shadow-sm transition flex items-center space-x-1.5 cursor-pointer"
           >
-            Unlock Trip
+            <i class="ph-bold ph-aperture text-base"></i>
+            <span>Capture Snapshot</span>
           </button>
         </div>
-      </form>
+      </div>
     </div>
   </div>
 
@@ -675,7 +706,7 @@
 
       <div class="space-y-3 text-xs text-slate-600">
         <p>
-          TripSplit AI uses <strong>Google Gemini 2.0 Flash</strong> to read receipt photos and PDF invoices (extracting total, description, category, and date).
+          <strong>Trip Split Expense</strong> uses <strong>Google Gemini 2.0 Flash</strong> to read receipt snapshots, photos, and PDF invoices (extracting total, description, category, and date).
         </p>
         <div>
           <label for="geminiApiKeyInput" class="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1">
