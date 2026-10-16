@@ -50,6 +50,8 @@ let yehDostiStopTimeout = null;
 let isYehDostiPlaying = false;
 let yehDostiStartTimeMs = 0;
 
+let yehDostiAutoUnlockBound = false;
+
 // ----------------- Initialization -----------------
 
 document.addEventListener("DOMContentLoaded", async () => {
@@ -57,6 +59,8 @@ document.addEventListener("DOMContentLoaded", async () => {
   renderDraftMembers();
   await loadAllTrips();
   checkAiScannerStatus();
+  // Play "Yeh Dosti Hum Nahi Todenge" (20s) by default when visiting the website
+  autoPlayYehDostiOnVisit();
 });
 
 function initDefaultDateInputs() {
@@ -67,39 +71,72 @@ function initDefaultDateInputs() {
 
 // ----------------- "YEH DOSTI HUM NAHI TODENGE" (SHOLAY) 20s MUSIC PLAYER -----------------
 
+function autoPlayYehDostiOnVisit() {
+  playYehDostiMusic(true);
+}
+
+function bindFirstInteractionUnlock() {
+  if (yehDostiAutoUnlockBound) return;
+  yehDostiAutoUnlockBound = true;
+
+  const bar = document.getElementById("yehDostiPlayerBar");
+  const timer = document.getElementById("yehDostiTimerLabel");
+  if (bar) bar.classList.remove("hidden");
+  if (timer) timer.textContent = "Tap to Play (20s)";
+
+  const unlockHandler = () => {
+    if (!yehDostiAutoUnlockBound) return;
+    yehDostiAutoUnlockBound = false;
+    ["pointerdown", "click", "touchstart", "keydown"].forEach(evt =>
+      document.removeEventListener(evt, unlockHandler, true)
+    );
+    playYehDostiMusic(false);
+  };
+
+  ["pointerdown", "click", "touchstart", "keydown"].forEach(evt =>
+    document.addEventListener(evt, unlockHandler, { capture: true, once: true })
+  );
+}
+
 function toggleYehDostiMusic() {
   if (isYehDostiPlaying) {
     stopYehDostiMusic();
   } else {
-    playYehDostiMusic();
+    playYehDostiMusic(false);
   }
 }
 
-async function playYehDostiMusic() {
+async function playYehDostiMusic(isAutoAttempt = false) {
   stopYehDostiMusic();
-  isYehDostiPlaying = true;
-  yehDostiStartTimeMs = Date.now();
-  updateYehDostiUi(true, YEH_DOSTI_DURATION_SEC, 0);
 
   let startedStream = false;
-  try {
-    yehDostiAudio = new Audio(YEH_DOSTI_STREAM_URLS[0]);
-    yehDostiAudio.crossOrigin = "anonymous";
-    yehDostiAudio.volume = 0.85;
-    yehDostiAudio.currentTime = 0;
-    await yehDostiAudio.play();
-    startedStream = true;
-  } catch (_) {
+  let blockedByAutoplayPolicy = false;
+
+  for (const url of YEH_DOSTI_STREAM_URLS) {
     try {
-      yehDostiAudio = new Audio(YEH_DOSTI_STREAM_URLS[1]);
+      yehDostiAudio = new Audio(url);
       yehDostiAudio.volume = 0.85;
       yehDostiAudio.currentTime = 0;
       await yehDostiAudio.play();
       startedStream = true;
-    } catch (err2) {
-      startedStream = false;
+      break;
+    } catch (err) {
+      if (err && (err.name === "NotAllowedError" || String(err).includes("NotAllowedError") || String(err).includes("interact"))) {
+        blockedByAutoplayPolicy = true;
+        break;
+      }
     }
   }
+
+  // If browser blocked unmuted autoplay on initial cold page load, arm instant playback on first click/tap anywhere
+  if (!startedStream && blockedByAutoplayPolicy && isAutoAttempt) {
+    bindFirstInteractionUnlock();
+    return;
+  }
+
+  isYehDostiPlaying = true;
+  yehDostiStartTimeMs = Date.now();
+  updateYehDostiUi(true, YEH_DOSTI_DURATION_SEC, 0);
 
   // Fallback to Web Audio API synthesizer playing the "Yeh Dosti Hum Nahi Todenge" melody if offline
   if (!startedStream) {
@@ -126,6 +163,7 @@ async function playYehDostiMusic() {
 
 function stopYehDostiMusic() {
   isYehDostiPlaying = false;
+  yehDostiAutoUnlockBound = false;
   if (yehDostiInterval) {
     clearInterval(yehDostiInterval);
     yehDostiInterval = null;
