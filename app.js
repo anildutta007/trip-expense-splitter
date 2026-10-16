@@ -1648,7 +1648,7 @@ function renderActiveTripDashboard() {
           <i class="ph-bold ph-receipt"></i>
         </div>
         <p class="text-sm font-bold text-slate-700">No expenses logged yet</p>
-        <p class="text-xs text-slate-400">Add an expense by hand or scan receipt snapshots/photos/PDFs on the left.</p>
+        <p class="text-xs text-slate-400">Use the Add an Expense form on the left to log your first bill.</p>
       </div>
     `;
     return;
@@ -1659,7 +1659,6 @@ function renderActiveTripDashboard() {
     const amt = Number(exp.amount) || 0;
     const sharedBy = (Array.isArray(exp.shared_by) && exp.shared_by.length > 0) ? exp.shared_by : members;
     const perPerson = sharedBy.length > 0 ? amt / sharedBy.length : amt;
-    const isScanned = exp.source === "scanned";
 
     return `
       <div class="p-4 sm:px-6 hover:bg-slate-50/80 transition flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -1674,12 +1673,6 @@ function renderActiveTripDashboard() {
               <span class="text-[10px] font-bold px-2 py-0.5 rounded-full border ${catMeta.badge}">
                 ${escapeHtml(exp.category || "Other")}
               </span>
-              ${isScanned ? `
-                <span class="inline-flex items-center space-x-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-violet-100 text-violet-800">
-                  <i class="ph-bold ph-sparkle"></i>
-                  <span>AI Scanned</span>
-                </span>
-              ` : ""}
               ${exp.date ? `<span class="text-[11px] text-slate-400 font-medium">${escapeHtml(exp.date)}</span>` : ""}
             </div>
 
@@ -1712,16 +1705,6 @@ function renderActiveTripDashboard() {
         <div class="flex sm:flex-col items-center sm:items-end justify-between sm:justify-center gap-1.5 shrink-0 pl-13 sm:pl-0">
           <div class="text-base font-extrabold text-slate-900">${cur}${amt.toFixed(2)}</div>
           <div class="flex items-center space-x-1.5">
-            ${isScanned ? `
-              <button
-                type="button"
-                onclick="deleteExpense('${escapeAttr(exp.id)}', true)"
-                class="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-violet-50 hover:bg-violet-100 text-violet-700 border border-violet-200 transition cursor-pointer"
-                title="Delete this scanned receipt and pre-fill it in Add by Hand to change who shared it"
-              >
-                Delete &amp; Re-add by Hand
-              </button>
-            ` : ""}
             <button
               type="button"
               onclick="deleteExpense('${escapeAttr(exp.id)}', false)"

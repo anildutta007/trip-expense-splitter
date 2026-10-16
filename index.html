@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Dosti Pakki Expense Apna Apna — Group Trip Expense Splitter &amp; Receipt Scanner</title>
+  <title>Dosti Pakki Expense Apna Apna — Group Trip Expense Splitter</title>
   <!-- Tailwind CSS CDN -->
   <script src="https://cdn.tailwindcss.com"></script>
   <!-- Phosphor Icons -->
@@ -24,7 +24,6 @@
         <div>
           <div class="flex items-center space-x-2">
             <h1 class="text-lg sm:text-xl font-extrabold text-slate-900 tracking-tight">Dosti Pakki Expense Apna Apna</h1>
-            <span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-800 uppercase tracking-wider">Receipt OCR</span>
           </div>
           <p class="text-xs text-slate-500">Group Trip Expense Splitter &amp; Smart Settle-Up</p>
         </div>
@@ -53,13 +52,6 @@
         <button id="headerExportCsvBtn" onclick="exportExpensesCSV()" class="hidden text-xs font-semibold flex items-center space-x-1.5 px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white transition shadow-xs cursor-pointer">
           <i class="ph-bold ph-file-csv text-sm"></i>
           <span>Export CSV</span>
-        </button>
-
-        <!-- Gemini AI Settings Button -->
-        <button onclick="openSettingsModal()" class="text-xs font-semibold flex items-center space-x-1.5 px-3 py-2 rounded-xl bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 transition shadow-xs cursor-pointer" title="AI Receipt Scanner Settings">
-          <span id="aiStatusDot" class="w-2 h-2 rounded-full bg-emerald-500"></span>
-          <span class="hidden sm:inline">AI Scanner</span>
-          <i class="ph-bold ph-gear text-slate-400"></i>
         </button>
       </div>
 
@@ -283,38 +275,20 @@
       <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
 
         <!-- =============================================================== -->
-        <!-- LEFT COLUMN (5 cols): ADD BY HAND OR SCAN RECEIPTS WITH AI       -->
+        <!-- LEFT COLUMN (5 cols): ADD AN EXPENSE                            -->
         <!-- =============================================================== -->
         <div class="lg:col-span-5 bg-white rounded-2xl border border-slate-200 card-shadow overflow-hidden">
 
-          <!-- Mode Switcher Tabs -->
-          <div class="grid grid-cols-2 border-b border-slate-200 bg-slate-50 p-1.5 gap-1.5">
-            <button
-              id="tabBtnManual"
-              type="button"
-              onclick="switchExpenseTab('manual')"
-              class="py-2.5 px-3 rounded-xl text-xs sm:text-sm font-bold flex items-center justify-center space-x-2 transition bg-white text-indigo-700 shadow-xs border border-slate-200 cursor-pointer"
-            >
-              <i class="ph-bold ph-hand-coins text-base"></i>
-              <span>Add by Hand</span>
-            </button>
-            <button
-              id="tabBtnScan"
-              type="button"
-              onclick="switchExpenseTab('scan')"
-              class="py-2.5 px-3 rounded-xl text-xs sm:text-sm font-bold flex items-center justify-center space-x-2 transition text-slate-600 hover:text-slate-900 cursor-pointer"
-            >
-              <i class="ph-bold ph-magic-wand text-base text-violet-600"></i>
-              <span>Scan Receipts (AI)</span>
-            </button>
+          <div class="bg-gradient-to-r from-indigo-600 to-violet-600 px-5 sm:px-6 py-4 text-white flex items-center justify-between">
+            <div class="flex items-center space-x-2">
+              <i class="ph-bold ph-hand-coins text-xl"></i>
+              <h3 class="text-sm sm:text-base font-extrabold">Add an Expense</h3>
+            </div>
+            <span class="text-[11px] text-indigo-100 font-medium">Custom split &amp; bill photo</span>
           </div>
 
-          <!-- TAB 1: ADD AN EXPENSE BY HAND -->
+          <!-- ADD AN EXPENSE FORM -->
           <form id="manualExpenseForm" onsubmit="handleAddManualExpense(event)" class="p-5 sm:p-6 space-y-4">
-            <div class="flex items-center justify-between">
-              <h3 class="text-sm font-extrabold text-slate-900">Add an Expense by Hand</h3>
-              <span class="text-[11px] text-slate-400">Custom split supported</span>
-            </div>
 
             <!-- Pick Who Paid & Amount -->
             <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -479,109 +453,6 @@
             </button>
           </form>
 
-          <!-- TAB 2: SCAN RECEIPTS WITH AI (SNAPSHOT, PHOTOS OR PDFS) -->
-          <form id="scanReceiptsForm" onsubmit="handleScanReceipts(event)" class="hidden p-5 sm:p-6 space-y-4">
-            <div class="flex items-center justify-between">
-              <h3 class="text-sm font-extrabold text-slate-900 flex items-center space-x-1.5">
-                <i class="ph-bold ph-sparkle text-violet-600"></i>
-                <span>Scan Receipts with AI</span>
-              </h3>
-              <span class="text-[11px] font-bold px-2 py-0.5 rounded-full bg-violet-100 text-violet-800">Snapshot, Photos &amp; PDFs</span>
-            </div>
-
-            <!-- Instruction Notice -->
-            <div class="p-3.5 rounded-xl bg-violet-50 border border-violet-200 text-xs text-violet-900 space-y-1">
-              <p class="font-semibold flex items-center space-x-1.5">
-                <i class="ph-bold ph-info text-violet-600 text-sm shrink-0"></i>
-                <span>How AI Receipt Scanning works:</span>
-              </p>
-              <p class="text-violet-800 leading-relaxed">
-                Choose who paid, then <strong>take a snapshot</strong> of the bill or <strong>upload one or more photos or PDFs</strong>. The AI reads each <strong>total, description, category and date</strong>, then adds it as an expense <strong>split between everyone</strong>.
-              </p>
-              <p class="text-violet-700 italic pt-0.5">
-                * To change who shared a scanned bill, delete it from the expenses list and add it again by hand.
-              </p>
-            </div>
-
-            <!-- Choose Who Paid -->
-            <div>
-              <label for="scanPaidBy" class="block text-xs font-bold uppercase tracking-wider text-slate-600 mb-1">
-                Who Paid for These Receipts? <span class="text-rose-500">*</span>
-              </label>
-              <select
-                id="scanPaidBy"
-                required
-                class="w-full px-3 py-2.5 rounded-xl border border-slate-300 text-sm font-semibold bg-white focus:outline-none focus:ring-2 focus:ring-violet-500"
-              ></select>
-            </div>
-
-            <!-- Take a Snapshot OR Upload One or More Photos / PDFs -->
-            <div class="space-y-2.5">
-              <label class="block text-xs font-bold uppercase tracking-wider text-slate-600">
-                Capture or Upload Bill Receipts <span class="text-rose-500">*</span>
-              </label>
-
-              <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                <!-- Button 1: Take a Snapshot with Camera -->
-                <button
-                  type="button"
-                  onclick="openCameraModal('scan')"
-                  class="flex flex-col items-center justify-center p-4 rounded-2xl border-2 border-indigo-200 hover:border-indigo-400 bg-indigo-50/50 hover:bg-indigo-50 transition cursor-pointer text-center"
-                >
-                  <div class="w-10 h-10 rounded-xl bg-indigo-100 text-indigo-600 flex items-center justify-center text-xl mb-1.5">
-                    <i class="ph-bold ph-camera"></i>
-                  </div>
-                  <span class="text-xs font-extrabold text-indigo-900">Take a Snapshot</span>
-                  <span class="text-[11px] text-indigo-600 mt-0.5">Use camera to snap bill</span>
-                </button>
-
-                <!-- Button 2: Upload Photos or PDFs -->
-                <label
-                  for="scanFilesInput"
-                  class="flex flex-col items-center justify-center p-4 rounded-2xl border-2 border-dashed border-violet-300 hover:border-violet-500 bg-violet-50/40 hover:bg-violet-50/80 transition cursor-pointer text-center"
-                >
-                  <div class="w-10 h-10 rounded-xl bg-violet-100 text-violet-600 flex items-center justify-center text-xl mb-1.5">
-                    <i class="ph-bold ph-upload-simple"></i>
-                  </div>
-                  <span class="text-xs font-extrabold text-slate-800">Upload Photos / PDFs</span>
-                  <span class="text-[11px] text-slate-500 mt-0.5">Select 1 or more files</span>
-                </label>
-              </div>
-
-              <input
-                id="scanFilesInput"
-                type="file"
-                multiple
-                accept="image/*,application/pdf,.pdf"
-                onchange="handleScanFilesSelected(event)"
-                class="hidden"
-              >
-              <!-- Fallback mobile camera capture input for Scan tab -->
-              <input
-                id="scanCameraFallbackInput"
-                type="file"
-                accept="image/*"
-                capture="environment"
-                onchange="handleScanFilesSelected(event)"
-                class="hidden"
-              >
-
-              <!-- Selected / Captured Files Queue -->
-              <div id="scanFilesList" class="hidden mt-3 space-y-1.5 max-h-44 overflow-y-auto p-2.5 rounded-xl bg-slate-50 border border-slate-200">
-                <!-- Populated by JS -->
-              </div>
-            </div>
-
-            <button
-              id="scanSubmitBtn"
-              type="submit"
-              class="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-700 hover:to-indigo-700 text-white font-bold text-sm shadow-sm transition flex items-center justify-center space-x-2 cursor-pointer"
-            >
-              <i class="ph-bold ph-magic-wand text-lg"></i>
-              <span id="scanSubmitBtnText">Scan &amp; Split Between Everyone</span>
-            </button>
-          </form>
-
         </div>
 
         <!-- =============================================================== -->
@@ -648,7 +519,7 @@
                 </div>
                 <div>
                   <h3 class="text-base font-extrabold text-slate-900">Trip Expenses</h3>
-                  <p class="text-xs text-slate-500">To change who shared a scanned bill, delete it and add it again by hand</p>
+                  <p class="text-xs text-slate-500">All expenses logged for this trip</p>
                 </div>
               </div>
 
@@ -798,54 +669,6 @@
       </div>
       <div class="p-4 bg-slate-900 flex items-center justify-center max-h-[75vh] overflow-auto">
         <img id="receiptPreviewImage" src="" alt="Receipt" class="max-w-full max-h-[68vh] rounded-lg object-contain">
-      </div>
-    </div>
-  </div>
-
-  <!-- ===================================================================== -->
-  <!-- MODAL 4: GEMINI AI API KEY SETTINGS MODAL                             -->
-  <!-- ===================================================================== -->
-  <div id="settingsModal" class="fixed inset-0 z-50 hidden bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-    <div class="bg-white rounded-2xl border border-slate-200 max-w-md w-full p-6 shadow-xl space-y-4 animate-fade-in">
-      <div class="flex items-center justify-between">
-        <div class="flex items-center space-x-2.5">
-          <div class="w-9 h-9 rounded-xl bg-violet-100 text-violet-600 flex items-center justify-center text-lg">
-            <i class="ph-bold ph-sparkle"></i>
-          </div>
-          <div>
-            <h3 class="text-base font-extrabold text-slate-900">AI Receipt Scanner Settings</h3>
-            <p class="text-xs text-slate-500">Google Gemini Vision &amp; PDF OCR</p>
-          </div>
-        </div>
-        <button onclick="closeSettingsModal()" class="text-slate-400 hover:text-slate-600 cursor-pointer">
-          <i class="ph-bold ph-x text-lg"></i>
-        </button>
-      </div>
-
-      <div class="space-y-3 text-xs text-slate-600">
-        <p>
-          <strong>Dosti Pakki Expense Apna Apna</strong> uses <strong>Google Gemini 2.0 Flash</strong> to read receipt snapshots, photos, and PDF invoices (extracting total, description, category, and date).
-        </p>
-        <div>
-          <label for="geminiApiKeyInput" class="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1">
-            Gemini API Key <span class="text-slate-400 font-normal">(Optional if set in server .env)</span>
-          </label>
-          <input
-            id="geminiApiKeyInput"
-            type="password"
-            placeholder="AIzaSy..."
-            class="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-          >
-        </div>
-      </div>
-
-      <div class="flex justify-end space-x-2 pt-2">
-        <button onclick="closeSettingsModal()" class="px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs cursor-pointer">
-          Cancel
-        </button>
-        <button onclick="saveSettingsModal()" class="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs cursor-pointer">
-          Save Key
-        </button>
       </div>
     </div>
   </div>
