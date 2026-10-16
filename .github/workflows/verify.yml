@@ -1,0 +1,62 @@
+name: Verify & Test TripSplit AI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Check JS Syntax & Run End-to-End Trip & Receipt Tests
+        run: |
+          node --check app.js
+          node --check server.js
+          node -e "
+            const { server } = require('./server.js');
+            server.listen(0, '127.0.0.1', async () => {
+              const port = server.address().port;
+              const base = 'http://127.0.0.1:' + port;
+              try {
+                const st = await (await fetch(base + '/api/status')).json();
+                if (st.status !== 'ok') throw new Error('Status check failed');
+
+                const createRes = await (await fetch(base + '/api/trips', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ name: 'CI Test Trip', members: ['Alice', 'Bob', 'Charlie'], pin: '0000' })
+                })).json();
+                const tid = createRes.trip.id;
+
+                const wrongPin = await fetch(base + '/api/trips/' + tid + '/open', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ pin: '1234' })
+                });
+                if (wrongPin.status !== 401) throw new Error('Expected 401 for wrong PIN');
+
+                const rightPin = await fetch(base + '/api/trips/' + tid + '/open', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ pin: '0000' })
+                });
+                if (rightPin.status !== 200) throw new Error('Expected 200 for right PIN');
+
+                console.log('TripSplit AI CI checks passed!');
+              } catch (err) {
+                console.error(err);
+                process.exitCode = 1;
+              } finally {
+                server.close();
+              }
+            });
+          "

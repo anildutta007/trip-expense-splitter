@@ -1,0 +1,1504 @@
+/**
+ * TripSplit AI — Frontend Application Logic
+ * Supports:
+ * 1. Creating trips with Name, Everyone's Names, and a PIN (starts as 0000)
+ * 2. Listing all trips on the home page & requiring PIN before opening any trip
+ * 3. Adding an expense by hand (who paid, amount, category, tick who shared, optional bill photo)
+ * 4. AI Receipt Scanning for 1 or more photos or PDFs (reads total, description, category, date; splits between everyone)
+ * 5. Who pays whom (strictly fewest payments to settle up, "Mark paid" -> moves to payments list, "Undo" there)
+ * 6. Exporting all expenses as a CSV spreadsheet
+ */
+
+const STORAGE_KEY_TRIPS = "tripsplit_ai_trips_v1";
+const STORAGE_KEY_GEMINI = "tripsplit_ai_gemini_key";
+
+const CATEGORY_META = {
+  "Food & Drink": { icon: "ph-fork-knife", badge: "bg-orange-50 text-orange-700 border-orange-200" },
+  "Transport": { icon: "ph-car-profile", badge: "bg-blue-50 text-blue-700 border-blue-200" },
+  "Accommodation": { icon: "ph-bed", badge: "bg-indigo-50 text-indigo-700 border-indigo-200" },
+  "Groceries": { icon: "ph-shopping-cart", badge: "bg-emerald-50 text-emerald-700 border-emerald-200" },
+  "Activities": { icon: "ph-ticket", badge: "bg-purple-50 text-purple-700 border-purple-200" },
+  "Shopping": { icon: "ph-shopping-bag", badge: "bg-pink-50 text-pink-700 border-pink-200" },
+  "Other": { icon: "ph-receipt", badge: "bg-slate-100 text-slate-700 border-slate-200" }
+};
+
+// Application State
+let allTripsMap = {};          // { [tripId]: TripObject }
+let draftMembers = ["Alice", "Bob", "Charlie"]; // Initial starter chips in Create Trip form
+let pendingUnlockTripId = null;
+let activeTrip = null;         // Currently unlocked & open trip
+let unlockedPin = null;        // PIN used to unlock activeTrip
+let manualPhotoDataUrl = null; // Optional bill photo attached to manual expense
+let manualPhotoName = null;
+let selectedScanFiles = [];    // Files queued for AI receipt scanning
+
+// ----------------- Initialization -----------------
+
+document.addEventListener("DOMContentLoaded", async () => {
+  initDefaultDateInputs();
+  renderDraftMembers();
+  await loadAllTrips();
+  checkAiScannerStatus();
+});
+
+function initDefaultDateInputs() {
+  const today = new Date().toISOString().split("T")[0];
+  const dateInput = document.getElementById("manualDate");
+  if (dateInput) dateInput.value = today;
+}
+
+function getLocalTripsMap() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_TRIPS);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === "object" && Object.keys(parsed).length > 0) {
+        return parsed;
+      }
+    }
+  } catch (e) {
+    console.warn("Could not read localStorage trips:", e);
+  }
+  // Seed with a default sample trip (PIN: 0000) if empty
+  const today = new Date().toISOString().split("T")[0];
+  const nowIso = new Date().toISOString();
+  const sample = {
+    "trip-sample-cotswolds": {
+      id: "trip-sample-cotswolds",
+      name: "Cotswolds Weekend Getaway",
+      pin: "0000",
+      currency: "£",
+      members: ["Anil", "Priya", "Sam", "Maya"],
+      expenses: [
+        {
+          id: "exp-sample-1",
+          paid_by: "Anil",
+          amount: 180.00,
+          description: "Countryside Cottage Deposit",
+          category: "Accommodation",
+          date: today,
+          shared_by: ["Anil", "Priya", "Sam", "Maya"],
+          source: "manual",
+          receipt_name: null,
+          receipt_data_url: null,
+          created_at: nowIso
+        },
+        {
+          id: "exp-sample-2",
+          paid_by: "Priya",
+          amount: 64.80,
+          description: "The Swan Country Pub Dinner",
+          category: "Food & Drink",
+          date: today,
+          shared_by: ["Anil", "Priya", "Sam", "Maya"],
+          source: "scanned",
+          receipt_name: "swan_pub_receipt.jpg",
+          receipt_data_url: null,
+          created_at: nowIso
+        },
+        {
+          id: "exp-sample-3",
+          paid_by: "Sam",
+          amount: 42.00,
+          description: "Fuel & Parking",
+          category: "Transport",
+          date: today,
+          shared_by: ["Anil", "Priya", "Sam"],
+          source: "manual",
+          receipt_name: null,
+          receipt_data_url: null,
+          created_at: nowIso
+        }
+      ],
+      payments: [],
+      created_at: nowIso,
+      updated_at: nowIso
+    }
+  };
+  saveLocalTripsMap(sample);
+  return sample;
+}
+
+function saveLocalTripsMap(map) {
+  try {
+    localStorage.setItem(STORAGE_KEY_TRIPS, JSON.stringify(map));
+  } catch (e) {
+    console.warn("localStorage quota or write error:", e);
+  }
+}
+
+async function loadAllTrips() {
+  allTripsMap = getLocalTripsMap();
+  try {
+    const res = await fetch("/api/trips");
+    if (res.ok) {
+      const data = await res.json();
+      if (data && Array.isArray(data.trips)) {
+        // Merge summary metadata with local full records
+        for (const summary of data.trips) {
+          if (!allTripsMap[summary.id]) {
+            allTripsMap[summary.id] = {
+              id: summary.id,
+              name: summary.name,
+              pin: "0000",
+              currency: summary.currency || "£",
+              members: summary.members || [],
+              expenses: [],
+              payments: [],
+              expense_count_hint: summary.expense_count,
+              total_spent_hint: summary.total_spent,
+              created_at: summary.created_at,
+              updated_at: summary.updated_at
+            };
+          }
+        }
+        saveLocalTripsMap(allTripsMap);
+      }
+    }
+  } catch (_) {
+    // Offline or standalone static mode — localTripsMap is already loaded
+  }
+  renderHomeTripsList();
+}
+
+async function syncTripToServer(tripObj, pinStr) {
+  allTripsMap[tripObj.id] = tripObj;
+  saveLocalTripsMap(allTripsMap);
+  try {
+    await fetch(`/api/trips/${encodeURIComponent(tripObj.id)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ trip: tripObj, pin: pinStr || tripObj.pin || "0000" })
+    });
+  } catch (_) {
+    // Ignore network error in offline mode
+  }
+}
+
+// ----------------- 1. CREATE A TRIP & HOME PAGE LIST -----------------
+
+function handleMemberInputKeydown(event) {
+  if (event.key === "Enter" || event.key === ",") {
+    event.preventDefault();
+    addDraftMemberFromInput();
+  }
+}
+
+function addDraftMemberFromInput() {
+  const input = document.getElementById("memberNameInput");
+  if (!input) return;
+  const raw = input.value.trim();
+  if (!raw) return;
+
+  const parts = raw.split(",").map(s => s.trim()).filter(Boolean);
+  let added = 0;
+  for (const part of parts) {
+    const exists = draftMembers.some(m => m.toLowerCase() === part.toLowerCase());
+    if (!exists) {
+      draftMembers.push(part);
+      added++;
+    }
+  }
+  input.value = "";
+  if (added > 0) {
+    renderDraftMembers();
+  }
+}
+
+function removeDraftMember(index) {
+  draftMembers.splice(index, 1);
+  renderDraftMembers();
+}
+
+function renderDraftMembers() {
+  const container = document.getElementById("draftMembersList");
+  if (!container) return;
+
+  if (draftMembers.length === 0) {
+    container.innerHTML = `<span class="text-xs text-slate-400 italic">No names added yet — type everyone's names above.</span>`;
+    return;
+  }
+
+  container.innerHTML = draftMembers.map((name, idx) => `
+    <span class="inline-flex items-center space-x-1.5 px-3 py-1 rounded-full text-xs font-bold bg-indigo-100 text-indigo-800 border border-indigo-200">
+      <i class="ph-bold ph-user text-indigo-600"></i>
+      <span>${escapeHtml(name)}</span>
+      <button type="button" onclick="removeDraftMember(${idx})" class="text-indigo-500 hover:text-rose-600 ml-1 cursor-pointer" title="Remove ${escapeHtml(name)}">
+        <i class="ph-bold ph-x"></i>
+      </button>
+    </span>
+  `).join("");
+}
+
+async function handleCreateTrip(event) {
+  event.preventDefault();
+
+  // Also capture any name left in the text input
+  addDraftMemberFromInput();
+
+  const nameInput = document.getElementById("tripNameInput");
+  const pinInput = document.getElementById("tripPinInput");
+  const currencyInput = document.getElementById("tripCurrencyInput");
+
+  const tripName = (nameInput.value || "").trim();
+  if (!tripName) {
+    showToast("Please enter a name for the trip.", "error");
+    return;
+  }
+
+  if (draftMembers.length === 0) {
+    showToast("Please add at least one person's name to the trip.", "error");
+    return;
+  }
+
+  const pinValue = (pinInput.value || "").trim() || "0000";
+  const currencyValue = (currencyInput.value || "£").trim() || "£";
+  const newTripId = "trip-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 6);
+  const nowIso = new Date().toISOString();
+
+  let createdTrip = {
+    id: newTripId,
+    name: tripName,
+    pin: pinValue,
+    currency: currencyValue,
+    members: [...draftMembers],
+    expenses: [],
+    payments: [],
+    created_at: nowIso,
+    updated_at: nowIso
+  };
+
+  try {
+    const res = await fetch("/api/trips", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id: newTripId,
+        name: tripName,
+        members: draftMembers,
+        pin: pinValue,
+        currency: currencyValue
+      })
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.trip) {
+        createdTrip = data.trip;
+      }
+    }
+  } catch (_) {
+    // Saved locally below
+  }
+
+  allTripsMap[createdTrip.id] = createdTrip;
+  saveLocalTripsMap(allTripsMap);
+
+  // Reset form (PIN starts as 0000)
+  nameInput.value = "";
+  pinInput.value = "0000";
+  draftMembers = [];
+  renderDraftMembers();
+  renderHomeTripsList();
+
+  showToast(`Trip "${createdTrip.name}" created! Click it on the list and enter PIN (${createdTrip.pin}) to open.`, "success");
+}
+
+function renderHomeTripsList() {
+  const container = document.getElementById("tripsListContainer");
+  const badge = document.getElementById("homeTripsCountBadge");
+  if (!container) return;
+
+  const tripsList = Object.values(allTripsMap).sort((a, b) => {
+    return (b.updated_at || "").localeCompare(a.updated_at || "");
+  });
+
+  if (badge) badge.textContent = String(tripsList.length);
+
+  if (tripsList.length === 0) {
+    container.innerHTML = `
+      <div class="col-span-full bg-white rounded-2xl border border-slate-200 p-8 text-center space-y-2">
+        <div class="w-12 h-12 rounded-2xl bg-indigo-50 text-indigo-600 flex items-center justify-center text-2xl mx-auto">
+          <i class="ph-bold ph-suitcase-rolling"></i>
+        </div>
+        <h3 class="text-sm font-bold text-slate-800">No trips created yet</h3>
+        <p class="text-xs text-slate-500">Use the "Create a Trip" form on the left to start your first group trip.</p>
+      </div>
+    `;
+    return;
+  }
+
+  container.innerHTML = tripsList.map(trip => {
+    const expenses = Array.isArray(trip.expenses) ? trip.expenses : [];
+    const expCount = expenses.length || trip.expense_count_hint || 0;
+    const totalSpent = expenses.length > 0
+      ? expenses.reduce((acc, e) => acc + (Number(e.amount) || 0), 0)
+      : (Number(trip.total_spent_hint) || 0);
+    const cur = trip.currency || "£";
+    const members = Array.isArray(trip.members) ? trip.members : [];
+
+    return `
+      <div
+        onclick="openPinModal('${escapeAttr(trip.id)}')"
+        class="group bg-white hover:bg-indigo-50/30 rounded-2xl border border-slate-200 hover:border-indigo-400 p-5 card-shadow transition cursor-pointer flex flex-col justify-between space-y-4"
+      >
+        <div class="space-y-2.5">
+          <div class="flex items-start justify-between gap-2">
+            <h3 class="text-base font-extrabold text-slate-900 group-hover:text-indigo-700 transition">
+              ${escapeHtml(trip.name)}
+            </h3>
+            <span class="inline-flex items-center space-x-1 text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200 shrink-0">
+              <i class="ph-bold ph-lock-key"></i>
+              <span>PIN</span>
+            </span>
+          </div>
+
+          <div class="flex flex-wrap gap-1.5">
+            ${members.map(m => `
+              <span class="text-[11px] font-semibold px-2 py-0.5 rounded-md bg-slate-100 text-slate-700">
+                ${escapeHtml(m)}
+              </span>
+            `).join("")}
+          </div>
+        </div>
+
+        <div class="pt-3 border-t border-slate-100 flex items-center justify-between">
+          <div class="text-xs text-slate-500">
+            <span class="font-bold text-slate-800">${cur}${totalSpent.toFixed(2)}</span>
+            <span> across ${expCount} expense${expCount === 1 ? "" : "s"}</span>
+          </div>
+          <span class="inline-flex items-center space-x-1 text-xs font-bold text-indigo-600 group-hover:translate-x-0.5 transition">
+            <span>Enter PIN</span>
+            <i class="ph-bold ph-arrow-right"></i>
+          </span>
+        </div>
+      </div>
+    `;
+  }).join("");
+}
+
+// ----------------- 2. PIN PROMPT MODAL TO OPEN A TRIP -----------------
+
+function openPinModal(tripId) {
+  const trip = allTripsMap[tripId];
+  if (!trip) return;
+
+  pendingUnlockTripId = tripId;
+  const modal = document.getElementById("pinModal");
+  const title = document.getElementById("pinModalTripName");
+  const input = document.getElementById("unlockPinInput");
+  const err = document.getElementById("pinModalError");
+
+  if (title) title.textContent = trip.name;
+  if (err) {
+    err.classList.add("hidden");
+    err.textContent = "";
+  }
+  if (input) {
+    input.value = "";
+  }
+  if (modal) {
+    modal.classList.remove("hidden");
+    setTimeout(() => input && input.focus(), 50);
+  }
+}
+
+function closePinModal() {
+  pendingUnlockTripId = null;
+  const modal = document.getElementById("pinModal");
+  if (modal) modal.classList.add("hidden");
+}
+
+async function submitPinModal(event) {
+  event.preventDefault();
+  if (!pendingUnlockTripId) return;
+
+  const input = document.getElementById("unlockPinInput");
+  const err = document.getElementById("pinModalError");
+  const enteredPin = (input ? input.value : "").trim();
+  const localTrip = allTripsMap[pendingUnlockTripId];
+
+  // 1. Try server verification first if server has this trip
+  try {
+    const res = await fetch(`/api/trips/${encodeURIComponent(pendingUnlockTripId)}/open`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pin: enteredPin })
+    });
+
+    if (res.status === 401) {
+      if (err) {
+        err.textContent = "Incorrect PIN for this trip. Please try again.";
+        err.classList.remove("hidden");
+      }
+      if (input) input.select();
+      return;
+    }
+
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.trip) {
+        // Keep local receipt photos if server didn't have them
+        if (localTrip && Array.isArray(localTrip.expenses) && localTrip.expenses.length >= (data.trip.expenses || []).length) {
+          allTripsMap[pendingUnlockTripId] = localTrip;
+        } else {
+          allTripsMap[pendingUnlockTripId] = data.trip;
+        }
+        saveLocalTripsMap(allTripsMap);
+        openUnlockedTrip(allTripsMap[pendingUnlockTripId], enteredPin);
+        return;
+      }
+    }
+  } catch (_) {
+    // Offline fallback verification below
+  }
+
+  // 2. Local verification
+  if (!localTrip) {
+    closePinModal();
+    return;
+  }
+
+  const expectedPin = String(localTrip.pin || "0000").trim();
+  if (enteredPin !== expectedPin) {
+    if (err) {
+      err.textContent = "Incorrect PIN for this trip. Please try again.";
+      err.classList.remove("hidden");
+    }
+    if (input) input.select();
+    return;
+  }
+
+  openUnlockedTrip(localTrip, enteredPin);
+}
+
+function openUnlockedTrip(tripObj, pinStr) {
+  activeTrip = tripObj;
+  unlockedPin = pinStr;
+  closePinModal();
+
+  document.getElementById("homeView").classList.add("hidden");
+  document.getElementById("tripView").classList.remove("hidden");
+  document.getElementById("headerBackHomeBtn").classList.remove("hidden");
+  document.getElementById("headerExportCsvBtn").classList.remove("hidden");
+
+  populateTripMemberControls();
+  renderActiveTripDashboard();
+}
+
+function goHomeAndLock() {
+  activeTrip = null;
+  unlockedPin = null;
+  document.getElementById("tripView").classList.add("hidden");
+  document.getElementById("homeView").classList.remove("hidden");
+  document.getElementById("headerBackHomeBtn").classList.add("hidden");
+  document.getElementById("headerExportCsvBtn").classList.add("hidden");
+  renderHomeTripsList();
+}
+
+// ----------------- 3. ADD AN EXPENSE BY HAND -----------------
+
+function switchExpenseTab(mode) {
+  const manualForm = document.getElementById("manualExpenseForm");
+  const scanForm = document.getElementById("scanReceiptsForm");
+  const btnManual = document.getElementById("tabBtnManual");
+  const btnScan = document.getElementById("tabBtnScan");
+
+  if (mode === "scan") {
+    manualForm.classList.add("hidden");
+    scanForm.classList.remove("hidden");
+    btnScan.className = "py-2.5 px-3 rounded-xl text-xs sm:text-sm font-bold flex items-center justify-center space-x-2 transition bg-white text-violet-700 shadow-xs border border-slate-200 cursor-pointer";
+    btnManual.className = "py-2.5 px-3 rounded-xl text-xs sm:text-sm font-bold flex items-center justify-center space-x-2 transition text-slate-600 hover:text-slate-900 cursor-pointer";
+  } else {
+    scanForm.classList.add("hidden");
+    manualForm.classList.remove("hidden");
+    btnManual.className = "py-2.5 px-3 rounded-xl text-xs sm:text-sm font-bold flex items-center justify-center space-x-2 transition bg-white text-indigo-700 shadow-xs border border-slate-200 cursor-pointer";
+    btnScan.className = "py-2.5 px-3 rounded-xl text-xs sm:text-sm font-bold flex items-center justify-center space-x-2 transition text-slate-600 hover:text-slate-900 cursor-pointer";
+  }
+}
+
+function populateTripMemberControls() {
+  if (!activeTrip) return;
+  const members = activeTrip.members || [];
+  const cur = activeTrip.currency || "£";
+
+  document.querySelectorAll(".currencySymbolLabel").forEach(el => {
+    el.textContent = cur;
+  });
+
+  // Populate Who Paid dropdowns (Manual + Scan)
+  const manualPaidBy = document.getElementById("manualPaidBy");
+  const scanPaidBy = document.getElementById("scanPaidBy");
+
+  const optionsHtml = members.map(m => `<option value="${escapeAttr(m)}">${escapeHtml(m)}</option>`).join("");
+  if (manualPaidBy) manualPaidBy.innerHTML = optionsHtml;
+  if (scanPaidBy) scanPaidBy.innerHTML = optionsHtml;
+
+  // Populate Tick Who Shared It checkboxes
+  const checkboxesContainer = document.getElementById("manualSharedCheckboxes");
+  if (checkboxesContainer) {
+    checkboxesContainer.innerHTML = members.map(m => `
+      <label class="flex items-center space-x-2.5 p-2 rounded-lg bg-white border border-slate-200 hover:border-indigo-300 cursor-pointer transition select-none">
+        <input
+          type="checkbox"
+          name="manualSharedMember"
+          value="${escapeAttr(m)}"
+          checked
+          onchange="updateManualSplitPreview()"
+          class="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500"
+        >
+        <span class="text-xs font-bold text-slate-800 truncate">${escapeHtml(m)}</span>
+      </label>
+    `).join("");
+  }
+
+  updateManualSplitPreview();
+}
+
+function toggleAllManualShared(checked) {
+  document.querySelectorAll('input[name="manualSharedMember"]').forEach(cb => {
+    cb.checked = checked;
+  });
+  updateManualSplitPreview();
+}
+
+function getCheckedManualSharedMembers() {
+  const checked = [];
+  document.querySelectorAll('input[name="manualSharedMember"]:checked').forEach(cb => {
+    checked.push(cb.value);
+  });
+  return checked;
+}
+
+function updateManualSplitPreview() {
+  if (!activeTrip) return;
+  const previewEl = document.getElementById("manualSplitPreview");
+  const amtInput = document.getElementById("manualAmount");
+  if (!previewEl || !amtInput) return;
+
+  const amt = parseFloat(amtInput.value) || 0;
+  const checked = getCheckedManualSharedMembers();
+  const cur = activeTrip.currency || "£";
+
+  if (checked.length === 0) {
+    previewEl.textContent = "Please tick at least one person who shared this expense.";
+    previewEl.className = "text-xs text-rose-600 font-semibold mt-1.5";
+    return;
+  }
+
+  const perPerson = amt / checked.length;
+  previewEl.className = "text-xs text-indigo-600 font-semibold mt-1.5";
+  previewEl.textContent = amt > 0
+    ? `Split equally between ${checked.length} ${checked.length === 1 ? "person" : "people"}: ${cur}${perPerson.toFixed(2)} each`
+    : `Ticked: ${checked.join(", ")}`;
+}
+
+async function handleManualPhotoChange(event) {
+  const file = event.target.files && event.target.files[0];
+  if (!file) {
+    clearManualPhoto();
+    return;
+  }
+  try {
+    manualPhotoDataUrl = await readAndCompressImage(file, 900, 0.78);
+    manualPhotoName = file.name;
+    document.getElementById("manualPhotoPreviewImg").src = manualPhotoDataUrl;
+    document.getElementById("manualPhotoPreviewName").textContent = file.name;
+    document.getElementById("manualPhotoPreviewBox").classList.remove("hidden");
+    document.getElementById("manualBillPhotoLabel").textContent = file.name;
+  } catch (err) {
+    console.warn("Failed reading photo:", err);
+  }
+}
+
+function clearManualPhoto() {
+  manualPhotoDataUrl = null;
+  manualPhotoName = null;
+  const fileInput = document.getElementById("manualBillPhoto");
+  if (fileInput) fileInput.value = "";
+  const previewBox = document.getElementById("manualPhotoPreviewBox");
+  if (previewBox) previewBox.classList.add("hidden");
+  const label = document.getElementById("manualBillPhotoLabel");
+  if (label) label.textContent = "Attach a photo of the bill (optional)...";
+}
+
+async function handleAddManualExpense(event) {
+  event.preventDefault();
+  if (!activeTrip) return;
+
+  const paidBy = document.getElementById("manualPaidBy").value;
+  const amountVal = parseFloat(document.getElementById("manualAmount").value);
+  const category = document.getElementById("manualCategory").value || "Other";
+  const dateVal = document.getElementById("manualDate").value || new Date().toISOString().split("T")[0];
+  const descInput = document.getElementById("manualDescription");
+  const description = (descInput.value || "").trim() || category;
+  const sharedBy = getCheckedManualSharedMembers();
+
+  if (!paidBy) {
+    showToast("Please select who paid.", "error");
+    return;
+  }
+  if (!amountVal || amountVal <= 0) {
+    showToast("Please enter a valid expense amount.", "error");
+    return;
+  }
+  if (sharedBy.length === 0) {
+    showToast("Please tick at least one person who shared this expense.", "error");
+    return;
+  }
+
+  const newExpense = {
+    id: "exp-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 6),
+    paid_by: paidBy,
+    amount: Math.round(amountVal * 100) / 100,
+    description: description,
+    category: category,
+    date: dateVal,
+    shared_by: sharedBy,
+    source: "manual",
+    receipt_name: manualPhotoName || null,
+    receipt_data_url: manualPhotoDataUrl || null,
+    created_at: new Date().toISOString()
+  };
+
+  if (!Array.isArray(activeTrip.expenses)) activeTrip.expenses = [];
+  activeTrip.expenses.unshift(newExpense);
+
+  await syncTripToServer(activeTrip, unlockedPin);
+
+  // Reset form fields
+  document.getElementById("manualAmount").value = "";
+  descInput.value = "";
+  toggleAllManualShared(true);
+  clearManualPhoto();
+  renderActiveTripDashboard();
+
+  const cur = activeTrip.currency || "£";
+  showToast(`Added "${newExpense.description}" (${cur}${newExpense.amount.toFixed(2)}) paid by ${newExpense.paid_by}.`, "success");
+}
+
+// ----------------- 4. SCAN RECEIPTS WITH AI (PHOTOS OR PDFS) -----------------
+
+function handleScanFilesSelected(event) {
+  const files = Array.from(event.target.files || []);
+  selectedScanFiles = files;
+  renderScanFilesQueue();
+}
+
+function removeScanFileAt(idx) {
+  selectedScanFiles.splice(idx, 1);
+  renderScanFilesQueue();
+}
+
+function renderScanFilesQueue() {
+  const listEl = document.getElementById("scanFilesList");
+  if (!listEl) return;
+
+  if (selectedScanFiles.length === 0) {
+    listEl.classList.add("hidden");
+    listEl.innerHTML = "";
+    return;
+  }
+
+  listEl.classList.remove("hidden");
+  listEl.innerHTML = selectedScanFiles.map((file, idx) => {
+    const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
+    const icon = isPdf ? "ph-file-pdf text-rose-600" : "ph-image text-violet-600";
+    const sizeKb = Math.max(1, Math.round(file.size / 1024));
+    return `
+      <div class="flex items-center justify-between px-3 py-2 rounded-lg bg-white border border-slate-200 text-xs">
+        <div class="flex items-center space-x-2 overflow-hidden">
+          <i class="ph-bold ${icon} text-base shrink-0"></i>
+          <span class="font-semibold text-slate-700 truncate">${escapeHtml(file.name)}</span>
+          <span class="text-slate-400 shrink-0">(${sizeKb} KB)</span>
+        </div>
+        <button type="button" onclick="removeScanFileAt(${idx})" class="text-slate-400 hover:text-rose-600 ml-2 cursor-pointer">
+          <i class="ph-bold ph-x"></i>
+        </button>
+      </div>
+    `;
+  }).join("");
+}
+
+async function handleScanReceipts(event) {
+  event.preventDefault();
+  if (!activeTrip) return;
+
+  const paidBy = document.getElementById("scanPaidBy").value;
+  if (!paidBy) {
+    showToast("Please choose who paid for the receipts.", "error");
+    return;
+  }
+  if (selectedScanFiles.length === 0) {
+    showToast("Please select one or more receipt photos or PDFs to scan.", "error");
+    return;
+  }
+
+  const submitBtn = document.getElementById("scanSubmitBtn");
+  const submitBtnText = document.getElementById("scanSubmitBtnText");
+  submitBtn.disabled = true;
+  submitBtn.classList.add("opacity-75");
+  submitBtnText.textContent = `AI Scanning ${selectedScanFiles.length} file(s)...`;
+
+  try {
+    // Prepare image previews and base64 payloads for all uploaded files (photos & PDFs)
+    const previewMap = {};
+    const filesPayload = [];
+    for (const f of selectedScanFiles) {
+      if (f.type.startsWith("image/")) {
+        try {
+          previewMap[f.name] = await readAndCompressImage(f, 900, 0.75);
+        } catch (_) {}
+      }
+      const dataUrl = await new Promise((resolve, reject) => {
+        const r = new FileReader();
+        r.onload = e => resolve(e.target.result);
+        r.onerror = reject;
+        r.readAsDataURL(f);
+      });
+      filesPayload.push({
+        name: f.name,
+        mime_type: f.type || (f.name.toLowerCase().endsWith(".pdf") ? "application/pdf" : "image/jpeg"),
+        data_base64: dataUrl
+      });
+    }
+
+    const headers = { "Content-Type": "application/json" };
+    const savedKey = localStorage.getItem(STORAGE_KEY_GEMINI);
+    if (savedKey) headers["x-gemini-key"] = savedKey;
+
+    let scannedReceipts = [];
+    let statusMessage = "";
+
+    try {
+      const res = await fetch("/api/scan-receipts-json", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          paid_by: paidBy,
+          files: filesPayload
+        })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        scannedReceipts = data.receipts || [];
+        statusMessage = data.message || "";
+      } else {
+        throw new Error("Server scan endpoint returned status " + res.status);
+      }
+    } catch (_) {
+      // Offline / static fallback: parse files locally
+      scannedReceipts = await clientFallbackScanReceipts(selectedScanFiles);
+      statusMessage = `Scanned ${scannedReceipts.length} receipt(s) and split each between everyone!`;
+    }
+
+    if (!Array.isArray(activeTrip.expenses)) activeTrip.expenses = [];
+    const everyone = [...(activeTrip.members || [])];
+
+    for (const item of scannedReceipts) {
+      const exp = {
+        id: "exp-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 6),
+        paid_by: paidBy,
+        amount: Math.round((Number(item.amount) || 15.00) * 100) / 100,
+        description: item.description || "Scanned Receipt",
+        category: CATEGORY_META[item.category] ? item.category : "Food & Drink",
+        date: item.date || new Date().toISOString().split("T")[0],
+        shared_by: everyone, // Scanned receipts are always split between everyone
+        source: "scanned",
+        receipt_name: item.source_file || null,
+        receipt_data_url: (item.source_file && previewMap[item.source_file]) ? previewMap[item.source_file] : null,
+        created_at: new Date().toISOString()
+      };
+      activeTrip.expenses.unshift(exp);
+    }
+
+    await syncTripToServer(activeTrip, unlockedPin);
+
+    // Clear selected files
+    selectedScanFiles = [];
+    const scanInput = document.getElementById("scanFilesInput");
+    if (scanInput) scanInput.value = "";
+    renderScanFilesQueue();
+    renderActiveTripDashboard();
+
+    showToast(statusMessage || `Added ${scannedReceipts.length} scanned receipt(s) split between everyone!`, "success");
+  } catch (err) {
+    showToast("Error scanning receipts: " + (err.message || err), "error");
+  } finally {
+    submitBtn.disabled = false;
+    submitBtn.classList.remove("opacity-75");
+    submitBtnText.textContent = "Scan & Split Between Everyone";
+  }
+}
+
+async function clientFallbackScanReceipts(files) {
+  const today = new Date().toISOString().split("T")[0];
+  const results = [];
+  for (const f of files) {
+    const stem = f.name.replace(/\.[^/.]+$/, "").replace(/[_\-]+/g, " ").trim();
+    const numMatch = stem.match(/(\d{1,4}(?:\.\d{2}))/);
+    const amount = numMatch ? parseFloat(numMatch[1]) : Math.round(((f.size % 6500) / 100 + 14.5) * 100) / 100;
+    const lower = stem.toLowerCase();
+    let category = "Food & Drink";
+    if (/uber|taxi|train|flight|fuel|petrol|parking|bus/.test(lower)) category = "Transport";
+    else if (/hotel|airbnb|stay|cottage|hostel|lodge/.test(lower)) category = "Accommodation";
+    else if (/tesco|sainsbury|asda|waitrose|aldi|lidl|grocer|market/.test(lower)) category = "Groceries";
+    else if (/ticket|museum|tour|cinema|activity/.test(lower)) category = "Activities";
+    results.push({
+      description: stem ? stem.replace(/\b\w/g, c => c.toUpperCase()) : "Scanned Receipt",
+      amount,
+      category,
+      date: today,
+      source_file: f.name
+    });
+  }
+  return results;
+}
+
+// ----------------- DELETE EXPENSE (OR DELETE & RE-ADD BY HAND) -----------------
+
+async function deleteExpense(expenseId, prefillManual = false) {
+  if (!activeTrip || !Array.isArray(activeTrip.expenses)) return;
+  const idx = activeTrip.expenses.findIndex(e => e.id === expenseId);
+  if (idx === -1) return;
+
+  const removed = activeTrip.expenses[idx];
+  activeTrip.expenses.splice(idx, 1);
+
+  await syncTripToServer(activeTrip, unlockedPin);
+  renderActiveTripDashboard();
+
+  if (prefillManual) {
+    switchExpenseTab("manual");
+    document.getElementById("manualPaidBy").value = removed.paid_by;
+    document.getElementById("manualAmount").value = removed.amount;
+    document.getElementById("manualCategory").value = CATEGORY_META[removed.category] ? removed.category : "Other";
+    document.getElementById("manualDate").value = removed.date || new Date().toISOString().split("T")[0];
+    document.getElementById("manualDescription").value = removed.description || "";
+    updateManualSplitPreview();
+    showToast(`Deleted scanned bill "${removed.description}" and pre-filled it in Add by Hand so you can tick who shared it!`, "info");
+  } else {
+    showToast(`Deleted expense "${removed.description}".`, "info");
+  }
+}
+
+// ----------------- 5. WHO PAYS WHOM (FEWEST PAYMENTS + MARK PAID + UNDO) -----------------
+
+/**
+ * Computes net balances for each member and the strictly minimum number of payments
+ * required to settle all debts.
+ */
+function calculateSettlementPlan(trip) {
+  const members = Array.isArray(trip.members) ? trip.members : [];
+  const expenses = Array.isArray(trip.expenses) ? trip.expenses : [];
+  const payments = Array.isArray(trip.payments) ? trip.payments : [];
+
+  const netFloat = {};
+  for (const m of members) netFloat[m] = 0;
+
+  // 1. Apply all shared expenses
+  for (const exp of expenses) {
+    const amt = Number(exp.amount) || 0;
+    if (amt <= 0) continue;
+    const payer = exp.paid_by;
+    const sharedBy = (Array.isArray(exp.shared_by) && exp.shared_by.length > 0)
+      ? exp.shared_by
+      : members;
+    if (sharedBy.length === 0) continue;
+
+    const splitAmt = amt / sharedBy.length;
+    if (netFloat[payer] === undefined) netFloat[payer] = 0;
+    netFloat[payer] += amt;
+
+    for (const beneficiary of sharedBy) {
+      if (netFloat[beneficiary] === undefined) netFloat[beneficiary] = 0;
+      netFloat[beneficiary] -= splitAmt;
+    }
+  }
+
+  // 2. Apply already marked-paid settlements from the payments list
+  for (const pay of payments) {
+    const pAmt = Number(pay.amount) || 0;
+    if (pAmt <= 0) continue;
+    if (netFloat[pay.from] === undefined) netFloat[pay.from] = 0;
+    if (netFloat[pay.to] === undefined) netFloat[pay.to] = 0;
+    netFloat[pay.from] += pAmt; // Debtor paid money -> owes less
+    netFloat[pay.to] -= pAmt;   // Creditor received money -> is owed less
+  }
+
+  // Convert to integer cents to guarantee zero floating-point drift
+  const netCents = {};
+  let sumCents = 0;
+  let maxPerson = members[0] || null;
+
+  for (const m of Object.keys(netFloat)) {
+    const c = Math.round(netFloat[m] * 100);
+    netCents[m] = c;
+    sumCents += c;
+    if (!maxPerson || Math.abs(c) > Math.abs(netCents[maxPerson] || 0)) {
+      maxPerson = m;
+    }
+  }
+  if (maxPerson && sumCents !== 0 && Math.abs(sumCents) <= members.length) {
+    netCents[maxPerson] -= sumCents;
+  }
+
+  const debtors = [];
+  const creditors = [];
+  for (const [person, cents] of Object.entries(netCents)) {
+    if (cents < -1) debtors.push({ person, cents: -cents });
+    else if (cents > 1) creditors.push({ person, cents });
+  }
+
+  // Sort largest first
+  debtors.sort((a, b) => b.cents - a.cents);
+  creditors.sort((a, b) => b.cents - a.cents);
+
+  // Optimal Minimum Cash Flow solver (backtracking search for strictly fewest transactions)
+  function solveMinTransactions(debList, credList) {
+    const dFiltered = debList.filter(d => d.cents > 1).sort((a, b) => b.cents - a.cents);
+    const cFiltered = credList.filter(c => c.cents > 1).sort((a, b) => b.cents - a.cents);
+
+    if (dFiltered.length === 0 || cFiltered.length === 0) return [];
+
+    // Fast path: if any debtor and creditor have the exact same amount, settling them together is always optimal
+    for (let i = 0; i < dFiltered.length; i++) {
+      for (let j = 0; j < cFiltered.length; j++) {
+        if (dFiltered[i].cents === cFiltered[j].cents) {
+          const matchedAmt = dFiltered[i].cents;
+          const nextD = dFiltered.map((x, idx) => idx === i ? { ...x, cents: 0 } : { ...x });
+          const nextC = cFiltered.map((x, idx) => idx === j ? { ...x, cents: 0 } : { ...x });
+          return [
+            { from: dFiltered[i].person, to: cFiltered[j].person, cents: matchedAmt },
+            ...solveMinTransactions(nextD, nextC)
+          ];
+        }
+      }
+    }
+
+    // Branch on the largest debtor against each creditor (for group size <= 10)
+    const firstDebtor = dFiltered[0];
+    if (dFiltered.length + cFiltered.length <= 12) {
+      let bestSolution = null;
+      for (let j = 0; j < cFiltered.length; j++) {
+        const cred = cFiltered[j];
+        const transfer = Math.min(firstDebtor.cents, cred.cents);
+        const nextD = dFiltered.map((x, idx) => idx === 0 ? { ...x, cents: x.cents - transfer } : { ...x });
+        const nextC = cFiltered.map((x, idx) => idx === j ? { ...x, cents: x.cents - transfer } : { ...x });
+
+        const subResult = solveMinTransactions(nextD, nextC);
+        const candidate = [{ from: firstDebtor.person, to: cred.person, cents: transfer }, ...subResult];
+        if (!bestSolution || candidate.length < bestSolution.length) {
+          bestSolution = candidate;
+        }
+      }
+      return bestSolution || [];
+    }
+
+    // Greedy fallback for huge groups (>12 active non-zero balances)
+    const cred = cFiltered[0];
+    const transfer = Math.min(firstDebtor.cents, cred.cents);
+    const nextD = dFiltered.map((x, idx) => idx === 0 ? { ...x, cents: x.cents - transfer } : { ...x });
+    const nextC = cFiltered.map((x, idx) => idx === 0 ? { ...x, cents: x.cents - transfer } : { ...x });
+    return [
+      { from: firstDebtor.person, to: cred.person, cents: transfer },
+      ...solveMinTransactions(nextD, nextC)
+    ];
+  }
+
+  const rawTransactions = solveMinTransactions(debtors, creditors);
+  const settlements = rawTransactions.map(t => ({
+    from: t.from,
+    to: t.to,
+    amount: Math.round(t.cents) / 100
+  }));
+
+  const memberBalances = members.map(m => ({
+    person: m,
+    balance: Math.round(netCents[m] || 0) / 100
+  }));
+
+  return { memberBalances, settlements };
+}
+
+async function markSettlementPaid(fromPerson, toPerson, amount) {
+  if (!activeTrip) return;
+  if (!Array.isArray(activeTrip.payments)) activeTrip.payments = [];
+
+  const paymentRecord = {
+    id: "pay-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 6),
+    from: fromPerson,
+    to: toPerson,
+    amount: Math.round(Number(amount) * 100) / 100,
+    paid_at: new Date().toISOString()
+  };
+
+  activeTrip.payments.unshift(paymentRecord);
+  await syncTripToServer(activeTrip, unlockedPin);
+  renderActiveTripDashboard();
+
+  const cur = activeTrip.currency || "£";
+  showToast(`Marked ${fromPerson} → ${toPerson} (${cur}${paymentRecord.amount.toFixed(2)}) as paid! Moved to Payments List.`, "success");
+}
+
+async function undoPayment(paymentId) {
+  if (!activeTrip || !Array.isArray(activeTrip.payments)) return;
+  const idx = activeTrip.payments.findIndex(p => p.id === paymentId);
+  if (idx === -1) return;
+
+  const undone = activeTrip.payments[idx];
+  activeTrip.payments.splice(idx, 1);
+
+  await syncTripToServer(activeTrip, unlockedPin);
+  renderActiveTripDashboard();
+
+  const cur = activeTrip.currency || "£";
+  showToast(`Undid payment of ${cur}${Number(undone.amount).toFixed(2)} from ${undone.from} to ${undone.to}.`, "info");
+}
+
+// ----------------- RENDER OPENED TRIP DASHBOARD -----------------
+
+function renderActiveTripDashboard() {
+  if (!activeTrip) return;
+
+  const cur = activeTrip.currency || "£";
+  const expenses = Array.isArray(activeTrip.expenses) ? activeTrip.expenses : [];
+  const payments = Array.isArray(activeTrip.payments) ? activeTrip.payments : [];
+  const members = Array.isArray(activeTrip.members) ? activeTrip.members : [];
+
+  // Header summary
+  document.getElementById("activeTripTitle").textContent = activeTrip.name;
+  const totalSpend = expenses.reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
+  document.getElementById("activeTripTotalSpend").textContent = `${cur}${totalSpend.toFixed(2)}`;
+  document.getElementById("activeTripExpenseCount").textContent = String(expenses.length);
+
+  const pillsEl = document.getElementById("activeTripMembersPills");
+  if (pillsEl) {
+    pillsEl.innerHTML = members.map(m => `
+      <span class="inline-flex items-center space-x-1 text-xs font-bold px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-700 border border-slate-200">
+        <i class="ph-bold ph-user text-indigo-600"></i>
+        <span>${escapeHtml(m)}</span>
+      </span>
+    `).join("");
+  }
+
+  // Who Pays Whom & Member Balances
+  const { memberBalances, settlements } = calculateSettlementPlan(activeTrip);
+
+  const balancesGrid = document.getElementById("memberBalancesGrid");
+  if (balancesGrid) {
+    balancesGrid.innerHTML = memberBalances.map(item => {
+      const isPositive = item.balance > 0.005;
+      const isNegative = item.balance < -0.005;
+      const colorClass = isPositive
+        ? "bg-emerald-50 border-emerald-200 text-emerald-800"
+        : (isNegative ? "bg-rose-50 border-rose-200 text-rose-800" : "bg-slate-50 border-slate-200 text-slate-600");
+      const signPrefix = isPositive ? "+" : (isNegative ? "-" : "");
+      const statusText = isPositive ? "Gets back" : (isNegative ? "Owes" : "Settled");
+
+      return `
+        <div class="p-3 rounded-xl border ${colorClass} flex flex-col justify-between">
+          <div class="text-xs font-bold truncate">${escapeHtml(item.person)}</div>
+          <div class="text-sm font-extrabold mt-1">${signPrefix}${cur}${Math.abs(item.balance).toFixed(2)}</div>
+          <div class="text-[10px] font-semibold opacity-75">${statusText}</div>
+        </div>
+      `;
+    }).join("");
+  }
+
+  const settlementBadge = document.getElementById("settlementCountBadge");
+  const whoPaysList = document.getElementById("whoPaysWhomList");
+
+  if (settlements.length === 0) {
+    if (settlementBadge) {
+      settlementBadge.textContent = "All settled up!";
+      settlementBadge.className = "text-xs font-bold px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800";
+    }
+    if (whoPaysList) {
+      whoPaysList.innerHTML = `
+        <div class="p-4 rounded-xl bg-emerald-50/70 border border-emerald-200 text-center text-xs font-semibold text-emerald-800 flex items-center justify-center space-x-2">
+          <i class="ph-bold ph-check-circle text-emerald-600 text-lg"></i>
+          <span>Everyone is completely settled up! No payments needed.</span>
+        </div>
+      `;
+    }
+  } else {
+    if (settlementBadge) {
+      settlementBadge.textContent = `${settlements.length} payment${settlements.length === 1 ? "" : "s"} needed`;
+      settlementBadge.className = "text-xs font-bold px-2.5 py-1 rounded-full bg-amber-100 text-amber-800";
+    }
+    if (whoPaysList) {
+      whoPaysList.innerHTML = settlements.map(s => `
+        <div class="flex flex-wrap items-center justify-between gap-3 p-3.5 rounded-xl bg-amber-50/50 border border-amber-200/80">
+          <div class="flex items-center space-x-2.5 text-sm">
+            <span class="font-extrabold text-slate-900 px-2.5 py-1 rounded-lg bg-white border border-slate-200 shadow-2xs">${escapeHtml(s.from)}</span>
+            <span class="text-xs font-bold text-amber-700 flex items-center space-x-1">
+              <span>pays</span>
+              <i class="ph-bold ph-arrow-right"></i>
+            </span>
+            <span class="font-extrabold text-slate-900 px-2.5 py-1 rounded-lg bg-white border border-slate-200 shadow-2xs">${escapeHtml(s.to)}</span>
+          </div>
+
+          <div class="flex items-center space-x-3 ml-auto">
+            <span class="text-base font-extrabold text-slate-900">${cur}${s.amount.toFixed(2)}</span>
+            <button
+              type="button"
+              onclick="markSettlementPaid('${escapeAttr(s.from)}', '${escapeAttr(s.to)}', ${s.amount})"
+              class="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-xs transition flex items-center space-x-1.5 cursor-pointer"
+            >
+              <i class="ph-bold ph-check"></i>
+              <span>Mark paid</span>
+            </button>
+          </div>
+        </div>
+      `).join("");
+    }
+  }
+
+  // Recorded Payments List (with Undo)
+  const paymentsBadge = document.getElementById("paymentsCountBadge");
+  const paymentsListEl = document.getElementById("recordedPaymentsList");
+  if (paymentsBadge) paymentsBadge.textContent = String(payments.length);
+
+  if (paymentsListEl) {
+    if (payments.length === 0) {
+      paymentsListEl.innerHTML = `
+        <p class="text-xs text-slate-400 italic py-1">No payments marked as paid yet. Tap "Mark paid" above when someone settles up.</p>
+      `;
+    } else {
+      paymentsListEl.innerHTML = payments.map(p => {
+        const dateFormatted = p.paid_at ? new Date(p.paid_at).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "";
+        return `
+          <div class="flex items-center justify-between gap-2 px-3.5 py-2.5 rounded-xl bg-emerald-50/60 border border-emerald-200 text-xs">
+            <div class="flex items-center space-x-2 flex-wrap">
+              <i class="ph-bold ph-check-circle text-emerald-600 text-sm"></i>
+              <span>
+                <strong class="text-slate-900">${escapeHtml(p.from)}</strong> paid
+                <strong class="text-slate-900">${escapeHtml(p.to)}</strong>
+                <strong class="text-emerald-800 ml-1">${cur}${Number(p.amount).toFixed(2)}</strong>
+              </span>
+              ${dateFormatted ? `<span class="text-[11px] text-slate-400">• ${escapeHtml(dateFormatted)}</span>` : ""}
+            </div>
+            <button
+              type="button"
+              onclick="undoPayment('${escapeAttr(p.id)}')"
+              class="px-2.5 py-1 rounded-lg bg-white hover:bg-rose-50 text-slate-600 hover:text-rose-600 border border-slate-200 font-bold text-[11px] transition flex items-center space-x-1 shrink-0 cursor-pointer"
+            >
+              <i class="ph-bold ph-arrow-counter-clockwise"></i>
+              <span>Undo</span>
+            </button>
+          </div>
+        `;
+      }).join("");
+    }
+  }
+
+  // Render All Trip Expenses List
+  const expensesContainer = document.getElementById("expensesListContainer");
+  if (!expensesContainer) return;
+
+  if (expenses.length === 0) {
+    expensesContainer.innerHTML = `
+      <div class="p-8 text-center space-y-2">
+        <div class="w-11 h-11 rounded-2xl bg-slate-100 text-slate-400 flex items-center justify-center text-xl mx-auto">
+          <i class="ph-bold ph-receipt"></i>
+        </div>
+        <p class="text-sm font-bold text-slate-700">No expenses logged yet</p>
+        <p class="text-xs text-slate-400">Add an expense by hand or scan receipt photos/PDFs on the left.</p>
+      </div>
+    `;
+    return;
+  }
+
+  expensesContainer.innerHTML = expenses.map(exp => {
+    const catMeta = CATEGORY_META[exp.category] || CATEGORY_META["Other"];
+    const amt = Number(exp.amount) || 0;
+    const sharedBy = (Array.isArray(exp.shared_by) && exp.shared_by.length > 0) ? exp.shared_by : members;
+    const perPerson = sharedBy.length > 0 ? amt / sharedBy.length : amt;
+    const isScanned = exp.source === "scanned";
+
+    return `
+      <div class="p-4 sm:px-6 hover:bg-slate-50/80 transition flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div class="flex items-start space-x-3.5">
+          <div class="w-10 h-10 rounded-xl border ${catMeta.badge} flex items-center justify-center text-lg shrink-0 mt-0.5">
+            <i class="ph-bold ${catMeta.icon}"></i>
+          </div>
+
+          <div class="space-y-1">
+            <div class="flex flex-wrap items-center gap-2">
+              <h4 class="text-sm font-extrabold text-slate-900">${escapeHtml(exp.description || exp.category)}</h4>
+              <span class="text-[10px] font-bold px-2 py-0.5 rounded-full border ${catMeta.badge}">
+                ${escapeHtml(exp.category || "Other")}
+              </span>
+              ${isScanned ? `
+                <span class="inline-flex items-center space-x-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-violet-100 text-violet-800">
+                  <i class="ph-bold ph-sparkle"></i>
+                  <span>AI Scanned</span>
+                </span>
+              ` : ""}
+              ${exp.date ? `<span class="text-[11px] text-slate-400 font-medium">${escapeHtml(exp.date)}</span>` : ""}
+            </div>
+
+            <p class="text-xs text-slate-600">
+              Paid by <strong class="text-slate-900">${escapeHtml(exp.paid_by)}</strong> •
+              Shared by <strong class="text-slate-800">${sharedBy.map(escapeHtml).join(", ")}</strong>
+              <span class="text-slate-400">(${cur}${perPerson.toFixed(2)} each)</span>
+            </p>
+
+            ${exp.receipt_data_url ? `
+              <div class="pt-1">
+                <button
+                  type="button"
+                  onclick="openReceiptPreviewModal('${escapeAttr(exp.id)}')"
+                  class="inline-flex items-center space-x-1 text-[11px] font-bold text-indigo-600 hover:text-indigo-800 bg-indigo-50 px-2.5 py-1 rounded-lg cursor-pointer"
+                >
+                  <i class="ph-bold ph-image"></i>
+                  <span>View Bill Photo</span>
+                </button>
+              </div>
+            ` : (exp.receipt_name ? `
+              <div class="text-[11px] text-slate-400 flex items-center space-x-1">
+                <i class="ph-bold ph-paperclip"></i>
+                <span>File: ${escapeHtml(exp.receipt_name)}</span>
+              </div>
+            ` : "")}
+          </div>
+        </div>
+
+        <div class="flex sm:flex-col items-center sm:items-end justify-between sm:justify-center gap-1.5 shrink-0 pl-13 sm:pl-0">
+          <div class="text-base font-extrabold text-slate-900">${cur}${amt.toFixed(2)}</div>
+          <div class="flex items-center space-x-1.5">
+            ${isScanned ? `
+              <button
+                type="button"
+                onclick="deleteExpense('${escapeAttr(exp.id)}', true)"
+                class="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-violet-50 hover:bg-violet-100 text-violet-700 border border-violet-200 transition cursor-pointer"
+                title="Delete this scanned receipt and pre-fill it in Add by Hand to change who shared it"
+              >
+                Delete &amp; Re-add by Hand
+              </button>
+            ` : ""}
+            <button
+              type="button"
+              onclick="deleteExpense('${escapeAttr(exp.id)}', false)"
+              class="text-xs font-bold px-2.5 py-1 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 transition flex items-center space-x-1 cursor-pointer"
+              title="Delete Expense"
+            >
+              <i class="ph-bold ph-trash"></i>
+              <span>Delete</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    `;
+  }).join("");
+}
+
+// ----------------- 6. EXPORT CSV (DOWNLOAD ALL EXPENSES AS SPREADSHEET) -----------------
+
+function exportExpensesCSV() {
+  if (!activeTrip) {
+    showToast("Open a trip first to export its expenses.", "error");
+    return;
+  }
+
+  const expenses = Array.isArray(activeTrip.expenses) ? activeTrip.expenses : [];
+  const members = Array.isArray(activeTrip.members) ? activeTrip.members : [];
+  const cur = activeTrip.currency || "£";
+
+  const headers = [
+    "Date",
+    "Description",
+    "Category",
+    "Paid By",
+    `Amount (${cur})`,
+    "Shared By",
+    `Split Per Person (${cur})`,
+    "Entry Method",
+    "Receipt File"
+  ];
+
+  const rows = expenses.map(exp => {
+    const amt = Number(exp.amount) || 0;
+    const sharedBy = (Array.isArray(exp.shared_by) && exp.shared_by.length > 0) ? exp.shared_by : members;
+    const splitEach = sharedBy.length > 0 ? amt / sharedBy.length : amt;
+    return [
+      exp.date || "",
+      exp.description || exp.category || "",
+      exp.category || "Other",
+      exp.paid_by || "",
+      amt.toFixed(2),
+      sharedBy.join("; "),
+      splitEach.toFixed(2),
+      exp.source === "scanned" ? "AI Scanned Receipt" : "Added by Hand",
+      exp.receipt_name || ""
+    ];
+  });
+
+  const csvLines = [
+    headers.map(csvEscape).join(","),
+    ...rows.map(r => r.map(csvEscape).join(","))
+  ];
+
+  // Prepend UTF-8 BOM (\uFEFF) so Microsoft Excel opens £/€/₹ symbols cleanly
+  const csvContent = "\uFEFF" + csvLines.join("\r\n");
+  const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+
+  const safeTripName = (activeTrip.name || "trip")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "") || "trip";
+
+  const link = document.createElement("a");
+  link.href = url;
+  link.setAttribute("download", `${safeTripName}-expenses.csv`);
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+
+  showToast(`Downloaded "${safeTripName}-expenses.csv" (${expenses.length} expense${expenses.length === 1 ? "" : "s"}).`, "success");
+}
+
+function csvEscape(val) {
+  const str = String(val === null || val === undefined ? "" : val);
+  if (/[",\r\n]/.test(str)) {
+    return `"${str.replace(/"/g, '""')}"`;
+  }
+  return str;
+}
+
+// ----------------- MODALS & UTILITIES -----------------
+
+function openReceiptPreviewModal(expenseId) {
+  if (!activeTrip || !Array.isArray(activeTrip.expenses)) return;
+  const exp = activeTrip.expenses.find(e => e.id === expenseId);
+  if (!exp || !exp.receipt_data_url) return;
+
+  document.getElementById("receiptPreviewTitle").textContent = `${exp.description} — Paid by ${exp.paid_by}`;
+  document.getElementById("receiptPreviewImage").src = exp.receipt_data_url;
+  document.getElementById("receiptPreviewModal").classList.remove("hidden");
+}
+
+function closeReceiptPreviewModal() {
+  document.getElementById("receiptPreviewModal").classList.add("hidden");
+}
+
+function openSettingsModal() {
+  const savedKey = localStorage.getItem(STORAGE_KEY_GEMINI) || "";
+  const input = document.getElementById("geminiApiKeyInput");
+  if (input) input.value = savedKey;
+  document.getElementById("settingsModal").classList.remove("hidden");
+}
+
+function closeSettingsModal() {
+  document.getElementById("settingsModal").classList.add("hidden");
+}
+
+function saveSettingsModal() {
+  const input = document.getElementById("geminiApiKeyInput");
+  const key = (input ? input.value : "").trim();
+  if (key) {
+    localStorage.setItem(STORAGE_KEY_GEMINI, key);
+    showToast("Saved Gemini API key for live receipt scanning.", "success");
+  } else {
+    localStorage.removeItem(STORAGE_KEY_GEMINI);
+    showToast("Cleared custom Gemini API key (using server .env if configured).", "info");
+  }
+  closeSettingsModal();
+  checkAiScannerStatus();
+}
+
+async function checkAiScannerStatus() {
+  const dot = document.getElementById("aiStatusDot");
+  if (!dot) return;
+  try {
+    const headers = {};
+    const savedKey = localStorage.getItem(STORAGE_KEY_GEMINI);
+    if (savedKey) headers["x-gemini-key"] = savedKey;
+    const res = await fetch("/api/status", { headers });
+    if (res.ok) {
+      const data = await res.json();
+      dot.className = data.ai_ready
+        ? "w-2 h-2 rounded-full bg-emerald-500"
+        : "w-2 h-2 rounded-full bg-amber-500";
+    }
+  } catch (_) {
+    dot.className = "w-2 h-2 rounded-full bg-amber-500";
+  }
+}
+
+function readAndCompressImage(file, maxDim = 900, quality = 0.78) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = e => {
+      const img = new Image();
+      img.onload = () => {
+        let { width, height } = img;
+        if (width > maxDim || height > maxDim) {
+          if (width > height) {
+            height = Math.round((height * maxDim) / width);
+            width = maxDim;
+          } else {
+            width = Math.round((width * maxDim) / height);
+            height = maxDim;
+          }
+        }
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL("image/jpeg", quality));
+      };
+      img.onerror = reject;
+      img.src = e.target.result;
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+let toastTimer = null;
+function showToast(message, type = "success") {
+  const banner = document.getElementById("toastBanner");
+  const icon = document.getElementById("toastIcon");
+  const text = document.getElementById("toastMessage");
+  if (!banner || !icon || !text) return;
+
+  text.textContent = message;
+  if (type === "error") {
+    banner.className = "p-4 rounded-2xl border flex items-center justify-between transition-all shadow-sm bg-rose-50 border-rose-200 text-rose-900";
+    icon.className = "ph-bold ph-warning-circle text-xl text-rose-600";
+  } else if (type === "info") {
+    banner.className = "p-4 rounded-2xl border flex items-center justify-between transition-all shadow-sm bg-indigo-50 border-indigo-200 text-indigo-900";
+    icon.className = "ph-bold ph-info text-xl text-indigo-600";
+  } else {
+    banner.className = "p-4 rounded-2xl border flex items-center justify-between transition-all shadow-sm bg-emerald-50 border-emerald-200 text-emerald-900";
+    icon.className = "ph-bold ph-check-circle text-xl text-emerald-600";
+  }
+
+  banner.classList.remove("hidden");
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => {
+    banner.classList.add("hidden");
+  }, 5500);
+}
+
+function hideToast() {
+  const banner = document.getElementById("toastBanner");
+  if (banner) banner.classList.add("hidden");
+}
+
+function escapeHtml(str) {
+  return String(str === null || str === undefined ? "" : str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function escapeAttr(str) {
+  return escapeHtml(str);
+}

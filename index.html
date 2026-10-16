@@ -1,0 +1,706 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TripSplit AI — Group Trip Expense Splitter & Receipt Scanner</title>
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Phosphor Icons -->
+  <script src="https://unpkg.com/@phosphor-icons/web"></script>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="min-h-screen flex flex-col bg-slate-50 text-slate-800">
+
+  <!-- TOP HEADER -->
+  <header class="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-xs">
+    <div class="max-w-6xl mx-auto px-4 sm:px-6 py-3.5 flex flex-wrap items-center justify-between gap-3">
+      
+      <!-- Brand -->
+      <div class="flex items-center space-x-3 cursor-pointer" onclick="goHomeAndLock()">
+        <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-600 to-violet-500 text-white flex items-center justify-center text-2xl shadow-sm">
+          <i class="ph-bold ph-airplane-tilt"></i>
+        </div>
+        <div>
+          <div class="flex items-center space-x-2">
+            <h1 class="text-lg sm:text-xl font-extrabold text-slate-900 tracking-tight">TripSplit AI</h1>
+            <span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-800 uppercase tracking-wider">Receipt OCR</span>
+          </div>
+          <p class="text-xs text-slate-500">Group Trip Expense Splitter &amp; Smart Settle-Up</p>
+        </div>
+      </div>
+
+      <!-- Right Controls -->
+      <div class="flex items-center space-x-2.5">
+        <!-- Shown only when inside an open trip -->
+        <button id="headerBackHomeBtn" onclick="goHomeAndLock()" class="hidden text-xs font-semibold flex items-center space-x-1.5 px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 transition cursor-pointer">
+          <i class="ph-bold ph-lock-key text-slate-600"></i>
+          <span>All Trips (Lock)</span>
+        </button>
+
+        <button id="headerExportCsvBtn" onclick="exportExpensesCSV()" class="hidden text-xs font-semibold flex items-center space-x-1.5 px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white transition shadow-xs cursor-pointer">
+          <i class="ph-bold ph-file-csv text-sm"></i>
+          <span>Export CSV</span>
+        </button>
+
+        <!-- Gemini AI Settings Button -->
+        <button onclick="openSettingsModal()" class="text-xs font-semibold flex items-center space-x-1.5 px-3 py-2 rounded-xl bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 transition shadow-xs cursor-pointer" title="AI Receipt Scanner Settings">
+          <span id="aiStatusDot" class="w-2 h-2 rounded-full bg-emerald-500"></span>
+          <span class="hidden sm:inline">AI Scanner</span>
+          <i class="ph-bold ph-gear text-slate-400"></i>
+        </button>
+      </div>
+
+    </div>
+  </header>
+
+  <!-- MAIN CONTENT CONTAINER -->
+  <main class="flex-1 max-w-6xl w-full mx-auto px-4 sm:px-6 py-6 space-y-6">
+
+    <!-- TOAST NOTIFICATION BANNER -->
+    <div id="toastBanner" class="hidden p-4 rounded-2xl border flex items-center justify-between transition-all shadow-sm animate-fade-in">
+      <div class="flex items-center space-x-3">
+        <i id="toastIcon" class="ph-bold ph-check-circle text-xl"></i>
+        <span id="toastMessage" class="text-sm font-medium"></span>
+      </div>
+      <button onclick="hideToast()" class="text-slate-400 hover:text-slate-600">
+        <i class="ph-bold ph-x"></i>
+      </button>
+    </div>
+
+    <!-- ===================================================================== -->
+    <!-- VIEW 1: HOME PAGE (CREATE A TRIP + LIST OF ALL PIN-PROTECTED TRIPS)  -->
+    <!-- ===================================================================== -->
+    <section id="homeView" class="space-y-8 animate-fade-in">
+
+      <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+
+        <!-- LEFT COLUMN: CREATE A NEW TRIP (5 cols) -->
+        <div class="lg:col-span-5 bg-white rounded-2xl border border-slate-200 card-shadow overflow-hidden">
+          <div class="bg-gradient-to-r from-indigo-600 to-violet-600 px-6 py-4 text-white">
+            <div class="flex items-center space-x-2.5">
+              <i class="ph-bold ph-plus-circle text-xl"></i>
+              <h2 class="text-base font-bold">Create a Trip</h2>
+            </div>
+            <p class="text-xs text-indigo-100 mt-0.5">Give it a name, add everyone's names, and set a PIN (starts as 0000).</p>
+          </div>
+
+          <form id="createTripForm" onsubmit="handleCreateTrip(event)" class="p-6 space-y-4">
+            <!-- Trip Name -->
+            <div>
+              <label for="tripNameInput" class="block text-xs font-bold uppercase tracking-wider text-slate-600 mb-1.5">
+                Trip Name <span class="text-rose-500">*</span>
+              </label>
+              <input
+                id="tripNameInput"
+                type="text"
+                required
+                placeholder="e.g., Lisbon Weekend, Lake District 2026"
+                class="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+              >
+            </div>
+
+            <!-- Add Everyone's Names -->
+            <div>
+              <label for="memberNameInput" class="block text-xs font-bold uppercase tracking-wider text-slate-600 mb-1.5">
+                Everyone's Names <span class="text-rose-500">*</span>
+              </label>
+              <div class="flex space-x-2">
+                <input
+                  id="memberNameInput"
+                  type="text"
+                  placeholder="Type a name (or comma-separated names) & press Add"
+                  onkeydown="handleMemberInputKeydown(event)"
+                  class="flex-1 px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                >
+                <button
+                  type="button"
+                  onclick="addDraftMemberFromInput()"
+                  class="px-4 py-2.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold text-xs border border-indigo-200 transition whitespace-nowrap cursor-pointer"
+                >
+                  + Add Name
+                </button>
+              </div>
+              <p class="text-[11px] text-slate-400 mt-1">Tip: Press Enter or separate names with commas (e.g. Alice, Bob, Charlie).</p>
+
+              <!-- Draft Members Chips -->
+              <div id="draftMembersList" class="flex flex-wrap gap-2 mt-3 min-h-[34px] p-2.5 rounded-xl bg-slate-50 border border-dashed border-slate-200">
+                <!-- Populated by JS -->
+              </div>
+            </div>
+
+            <!-- PIN & Currency Row -->
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label for="tripPinInput" class="block text-xs font-bold uppercase tracking-wider text-slate-600 mb-1.5">
+                  Trip PIN <span class="text-slate-400 font-normal">(Starts 0000)</span>
+                </label>
+                <div class="relative">
+                  <i class="ph-bold ph-lock-key absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400"></i>
+                  <input
+                    id="tripPinInput"
+                    type="text"
+                    value="0000"
+                    maxlength="12"
+                    required
+                    class="w-full pl-9 pr-3 py-2.5 rounded-xl border border-slate-300 text-sm font-bold tracking-widest text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  >
+                </div>
+              </div>
+
+              <div>
+                <label for="tripCurrencyInput" class="block text-xs font-bold uppercase tracking-wider text-slate-600 mb-1.5">
+                  Currency
+                </label>
+                <select
+                  id="tripCurrencyInput"
+                  class="w-full px-3 py-2.5 rounded-xl border border-slate-300 text-sm font-semibold bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                >
+                  <option value="£">£ GBP (Pounds)</option>
+                  <option value="€">€ EUR (Euros)</option>
+                  <option value="$">$ USD (Dollars)</option>
+                  <option value="₹">₹ INR (Rupees)</option>
+                </select>
+              </div>
+            </div>
+
+            <button
+              type="submit"
+              class="w-full py-3 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm shadow-sm transition flex items-center justify-center space-x-2 cursor-pointer"
+            >
+              <i class="ph-bold ph-suitcase-rolling text-lg"></i>
+              <span>Create Trip</span>
+            </button>
+          </form>
+        </div>
+
+        <!-- RIGHT COLUMN: ALL TRIPS LIST (7 cols) -->
+        <div class="lg:col-span-7 space-y-4">
+          <div class="flex items-center justify-between">
+            <div>
+              <h2 class="text-lg font-extrabold text-slate-900 flex items-center space-x-2">
+                <i class="ph-bold ph-folders text-indigo-600"></i>
+                <span>All Trips</span>
+                <span id="homeTripsCountBadge" class="text-xs px-2.5 py-0.5 rounded-full bg-slate-200 text-slate-700 font-bold">0</span>
+              </h2>
+              <p class="text-xs text-slate-500">Select any trip below and enter its PIN to open expenses &amp; settlements.</p>
+            </div>
+          </div>
+
+          <!-- Trips Grid -->
+          <div id="tripsListContainer" class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <!-- Populated dynamically by JS -->
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ===================================================================== -->
+    <!-- VIEW 2: OPENED TRIP DASHBOARD                                         -->
+    <!-- ===================================================================== -->
+    <section id="tripView" class="hidden space-y-6 animate-fade-in">
+
+      <!-- TRIP SUMMARY BANNER -->
+      <div class="bg-white rounded-2xl border border-slate-200 card-shadow p-5 sm:p-6 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+        <div class="space-y-2">
+          <div class="flex flex-wrap items-center gap-2.5">
+            <button onclick="goHomeAndLock()" class="inline-flex items-center space-x-1 text-xs font-bold text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 px-2.5 py-1 rounded-lg transition cursor-pointer">
+              <i class="ph-bold ph-arrow-left"></i>
+              <span>All Trips</span>
+            </button>
+            <h2 id="activeTripTitle" class="text-xl sm:text-2xl font-extrabold text-slate-900">Trip Name</h2>
+            <span class="inline-flex items-center space-x-1 text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
+              <i class="ph-bold ph-lock-key-open"></i>
+              <span>PIN Unlocked</span>
+            </span>
+          </div>
+
+          <!-- Trip Members Pills -->
+          <div class="flex flex-wrap items-center gap-1.5 pt-1">
+            <span class="text-xs font-semibold text-slate-400 mr-1">Group Members:</span>
+            <div id="activeTripMembersPills" class="flex flex-wrap gap-1.5"></div>
+          </div>
+        </div>
+
+        <!-- Key Trip Totals & Actions -->
+        <div class="flex flex-wrap items-center gap-3">
+          <div class="bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-right">
+            <div class="text-[11px] font-bold uppercase tracking-wider text-slate-400">Total Trip Spend</div>
+            <div id="activeTripTotalSpend" class="text-xl font-extrabold text-slate-900">£0.00</div>
+          </div>
+          <div class="bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-right">
+            <div class="text-[11px] font-bold uppercase tracking-wider text-slate-400">Expenses</div>
+            <div id="activeTripExpenseCount" class="text-xl font-extrabold text-indigo-600">0</div>
+          </div>
+          <button
+            onclick="exportExpensesCSV()"
+            class="px-4 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-xs transition flex items-center space-x-2 cursor-pointer"
+          >
+            <i class="ph-bold ph-download-simple text-base"></i>
+            <span>Export CSV</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- MAIN TRIP GRID: ADD/SCAN EXPENSES (LEFT 5 COLS) + SETTLE UP & EXPENSES (RIGHT 7 COLS) -->
+      <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+
+        <!-- =============================================================== -->
+        <!-- LEFT COLUMN (5 cols): ADD BY HAND OR SCAN RECEIPTS WITH AI       -->
+        <!-- =============================================================== -->
+        <div class="lg:col-span-5 bg-white rounded-2xl border border-slate-200 card-shadow overflow-hidden">
+
+          <!-- Mode Switcher Tabs -->
+          <div class="grid grid-cols-2 border-b border-slate-200 bg-slate-50 p-1.5 gap-1.5">
+            <button
+              id="tabBtnManual"
+              type="button"
+              onclick="switchExpenseTab('manual')"
+              class="py-2.5 px-3 rounded-xl text-xs sm:text-sm font-bold flex items-center justify-center space-x-2 transition bg-white text-indigo-700 shadow-xs border border-slate-200 cursor-pointer"
+            >
+              <i class="ph-bold ph-hand-coins text-base"></i>
+              <span>Add by Hand</span>
+            </button>
+            <button
+              id="tabBtnScan"
+              type="button"
+              onclick="switchExpenseTab('scan')"
+              class="py-2.5 px-3 rounded-xl text-xs sm:text-sm font-bold flex items-center justify-center space-x-2 transition text-slate-600 hover:text-slate-900 cursor-pointer"
+            >
+              <i class="ph-bold ph-magic-wand text-base text-violet-600"></i>
+              <span>Scan Receipts (AI)</span>
+            </button>
+          </div>
+
+          <!-- TAB 1: ADD AN EXPENSE BY HAND -->
+          <form id="manualExpenseForm" onsubmit="handleAddManualExpense(event)" class="p-5 sm:p-6 space-y-4">
+            <div class="flex items-center justify-between">
+              <h3 class="text-sm font-extrabold text-slate-900">Add an Expense by Hand</h3>
+              <span class="text-[11px] text-slate-400">Custom split supported</span>
+            </div>
+
+            <!-- Pick Who Paid & Amount -->
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label for="manualPaidBy" class="block text-xs font-bold uppercase tracking-wider text-slate-600 mb-1">
+                  Who Paid? <span class="text-rose-500">*</span>
+                </label>
+                <select
+                  id="manualPaidBy"
+                  required
+                  class="w-full px-3 py-2.5 rounded-xl border border-slate-300 text-sm font-semibold bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                ></select>
+              </div>
+
+              <div>
+                <label for="manualAmount" class="block text-xs font-bold uppercase tracking-wider text-slate-600 mb-1">
+                  Amount (<span class="currencySymbolLabel">£</span>) <span class="text-rose-500">*</span>
+                </label>
+                <input
+                  id="manualAmount"
+                  type="number"
+                  step="0.01"
+                  min="0.01"
+                  required
+                  placeholder="0.00"
+                  oninput="updateManualSplitPreview()"
+                  class="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                >
+              </div>
+            </div>
+
+            <!-- Category & Date -->
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label for="manualCategory" class="block text-xs font-bold uppercase tracking-wider text-slate-600 mb-1">
+                  Category <span class="text-rose-500">*</span>
+                </label>
+                <select
+                  id="manualCategory"
+                  required
+                  class="w-full px-3 py-2.5 rounded-xl border border-slate-300 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                >
+                  <option value="Food & Drink">🍽️ Food &amp; Drink</option>
+                  <option value="Transport">🚕 Transport</option>
+                  <option value="Accommodation">🏨 Accommodation</option>
+                  <option value="Groceries">🛒 Groceries</option>
+                  <option value="Activities">🎟️ Activities</option>
+                  <option value="Shopping">🛍️ Shopping</option>
+                  <option value="Other">📌 Other</option>
+                </select>
+              </div>
+
+              <div>
+                <label for="manualDate" class="block text-xs font-bold uppercase tracking-wider text-slate-600 mb-1">
+                  Date
+                </label>
+                <input
+                  id="manualDate"
+                  type="date"
+                  class="w-full px-3 py-2.5 rounded-xl border border-slate-300 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                >
+              </div>
+            </div>
+
+            <!-- Description -->
+            <div>
+              <label for="manualDescription" class="block text-xs font-bold uppercase tracking-wider text-slate-600 mb-1">
+                Description <span class="text-slate-400 font-normal">(e.g. Dinner, Train tickets)</span>
+              </label>
+              <input
+                id="manualDescription"
+                type="text"
+                placeholder="What was this expense for?"
+                class="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              >
+            </div>
+
+            <!-- Tick Who Shared It -->
+            <div>
+              <div class="flex items-center justify-between mb-1.5">
+                <label class="text-xs font-bold uppercase tracking-wider text-slate-600">
+                  Tick Who Shared It <span class="text-rose-500">*</span>
+                </label>
+                <div class="space-x-2 text-xs">
+                  <button type="button" onclick="toggleAllManualShared(true)" class="text-indigo-600 hover:underline font-semibold cursor-pointer">Select All</button>
+                  <span class="text-slate-300">|</span>
+                  <button type="button" onclick="toggleAllManualShared(false)" class="text-slate-500 hover:underline font-semibold cursor-pointer">Clear</button>
+                </div>
+              </div>
+              <div id="manualSharedCheckboxes" class="grid grid-cols-2 gap-2 p-3 rounded-xl bg-slate-50 border border-slate-200">
+                <!-- Populated dynamically by JS -->
+              </div>
+              <p id="manualSplitPreview" class="text-xs text-indigo-600 font-semibold mt-1.5"></p>
+            </div>
+
+            <!-- Optional Photo of the Bill -->
+            <div>
+              <label class="block text-xs font-bold uppercase tracking-wider text-slate-600 mb-1">
+                Photo of the Bill <span class="text-slate-400 font-normal">(Optional)</span>
+              </label>
+              <label for="manualBillPhoto" class="flex items-center justify-between px-3.5 py-2.5 rounded-xl border border-dashed border-slate-300 hover:border-indigo-400 bg-slate-50/60 cursor-pointer transition">
+                <div class="flex items-center space-x-2.5 overflow-hidden">
+                  <i class="ph-bold ph-camera text-indigo-600 text-lg shrink-0"></i>
+                  <span id="manualBillPhotoLabel" class="text-xs text-slate-600 truncate">Attach a photo of the bill (optional)...</span>
+                </div>
+                <span class="text-[11px] font-bold text-indigo-600 bg-indigo-50 px-2.5 py-1 rounded-lg shrink-0">Browse</span>
+              </label>
+              <input
+                id="manualBillPhoto"
+                type="file"
+                accept="image/*"
+                onchange="handleManualPhotoChange(event)"
+                class="hidden"
+              >
+              <!-- Optional Photo Preview -->
+              <div id="manualPhotoPreviewBox" class="hidden mt-2 flex items-center justify-between p-2 rounded-xl bg-slate-100 border border-slate-200">
+                <div class="flex items-center space-x-2.5">
+                  <img id="manualPhotoPreviewImg" src="" alt="Bill preview" class="w-10 h-10 object-cover rounded-lg border border-slate-300">
+                  <span id="manualPhotoPreviewName" class="text-xs font-medium text-slate-700 truncate max-w-[180px]"></span>
+                </div>
+                <button type="button" onclick="clearManualPhoto()" class="text-xs text-rose-600 hover:text-rose-800 font-bold px-2 py-1 cursor-pointer">
+                  Remove
+                </button>
+              </div>
+            </div>
+
+            <button
+              type="submit"
+              class="w-full py-3 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm shadow-sm transition flex items-center justify-center space-x-2 cursor-pointer"
+            >
+              <i class="ph-bold ph-plus-circle text-lg"></i>
+              <span>Add Expense</span>
+            </button>
+          </form>
+
+          <!-- TAB 2: SCAN RECEIPTS WITH AI (PHOTOS OR PDFS) -->
+          <form id="scanReceiptsForm" onsubmit="handleScanReceipts(event)" class="hidden p-5 sm:p-6 space-y-4">
+            <div class="flex items-center justify-between">
+              <h3 class="text-sm font-extrabold text-slate-900 flex items-center space-x-1.5">
+                <i class="ph-bold ph-sparkle text-violet-600"></i>
+                <span>Scan Receipts with AI</span>
+              </h3>
+              <span class="text-[11px] font-bold px-2 py-0.5 rounded-full bg-violet-100 text-violet-800">Photos &amp; PDFs</span>
+            </div>
+
+            <!-- Instruction Notice -->
+            <div class="p-3.5 rounded-xl bg-violet-50 border border-violet-200 text-xs text-violet-900 space-y-1">
+              <p class="font-semibold flex items-center space-x-1.5">
+                <i class="ph-bold ph-info text-violet-600 text-sm shrink-0"></i>
+                <span>How AI Receipt Scanning works:</span>
+              </p>
+              <p class="text-violet-800 leading-relaxed">
+                Choose who paid, then upload one or more receipt photos or PDFs. The AI reads each <strong>total, description, category and date</strong>, then adds it as an expense <strong>split between everyone</strong>.
+              </p>
+              <p class="text-violet-700 italic pt-0.5">
+                * To change who shared a scanned bill, delete it from the expenses list and add it again by hand.
+              </p>
+            </div>
+
+            <!-- Choose Who Paid -->
+            <div>
+              <label for="scanPaidBy" class="block text-xs font-bold uppercase tracking-wider text-slate-600 mb-1">
+                Who Paid for These Receipts? <span class="text-rose-500">*</span>
+              </label>
+              <select
+                id="scanPaidBy"
+                required
+                class="w-full px-3 py-2.5 rounded-xl border border-slate-300 text-sm font-semibold bg-white focus:outline-none focus:ring-2 focus:ring-violet-500"
+              ></select>
+            </div>
+
+            <!-- Upload One or More Photos or PDFs -->
+            <div>
+              <label class="block text-xs font-bold uppercase tracking-wider text-slate-600 mb-1">
+                Receipt Photos or PDFs <span class="text-rose-500">*</span>
+              </label>
+              <label
+                for="scanFilesInput"
+                class="flex flex-col items-center justify-center p-6 rounded-2xl border-2 border-dashed border-violet-300 hover:border-violet-500 bg-violet-50/40 hover:bg-violet-50/80 transition cursor-pointer text-center"
+              >
+                <div class="w-12 h-12 rounded-2xl bg-violet-100 text-violet-600 flex items-center justify-center text-2xl mb-2">
+                  <i class="ph-bold ph-files"></i>
+                </div>
+                <span class="text-sm font-bold text-slate-800">Click to select receipt photos or PDFs</span>
+                <span class="text-xs text-slate-500 mt-0.5">Supports multiple files at once (.jpg, .png, .webp, .pdf)</span>
+              </label>
+              <input
+                id="scanFilesInput"
+                type="file"
+                multiple
+                accept="image/*,application/pdf,.pdf"
+                onchange="handleScanFilesSelected(event)"
+                class="hidden"
+              >
+
+              <!-- Selected Files Queue -->
+              <div id="scanFilesList" class="hidden mt-3 space-y-1.5 max-h-44 overflow-y-auto p-2.5 rounded-xl bg-slate-50 border border-slate-200">
+                <!-- Populated by JS -->
+              </div>
+            </div>
+
+            <button
+              id="scanSubmitBtn"
+              type="submit"
+              class="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-700 hover:to-indigo-700 text-white font-bold text-sm shadow-sm transition flex items-center justify-center space-x-2 cursor-pointer"
+            >
+              <i class="ph-bold ph-magic-wand text-lg"></i>
+              <span id="scanSubmitBtnText">Scan &amp; Split Between Everyone</span>
+            </button>
+          </form>
+
+        </div>
+
+        <!-- =============================================================== -->
+        <!-- RIGHT COLUMN (7 cols): WHO PAYS WHOM, PAYMENTS LIST, & EXPENSES -->
+        <!-- =============================================================== -->
+        <div class="lg:col-span-7 space-y-6">
+
+          <!-- 1. WHO PAYS WHOM (FEWEST PAYMENTS TO SETTLE UP) -->
+          <div class="bg-white rounded-2xl border border-slate-200 card-shadow overflow-hidden">
+            <div class="px-5 sm:px-6 py-4 border-b border-slate-100 flex flex-wrap items-center justify-between gap-2 bg-slate-50/60">
+              <div class="flex items-center space-x-2">
+                <div class="w-8 h-8 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center text-lg">
+                  <i class="ph-bold ph-arrows-left-right"></i>
+                </div>
+                <div>
+                  <h3 class="text-base font-extrabold text-slate-900">Who Pays Whom</h3>
+                  <p class="text-xs text-slate-500">Fewest payments needed to settle up everyone's balance</p>
+                </div>
+              </div>
+              <span id="settlementCountBadge" class="text-xs font-bold px-2.5 py-1 rounded-full bg-amber-100 text-amber-800">
+                All settled!
+              </span>
+            </div>
+
+            <div class="p-5 sm:p-6 space-y-5">
+              <!-- Member Net Balances Bar -->
+              <div>
+                <div class="text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-2">Net Member Balances</div>
+                <div id="memberBalancesGrid" class="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                  <!-- Populated by JS -->
+                </div>
+              </div>
+
+              <!-- Recommended Fewest Payments List -->
+              <div>
+                <div class="text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-2">Recommended Settlements (Fewest Payments)</div>
+                <div id="whoPaysWhomList" class="space-y-2.5">
+                  <!-- Populated by JS -->
+                </div>
+              </div>
+
+              <!-- PAYMENTS LIST (MARKED PAID WITH UNDO) -->
+              <div id="recordedPaymentsSection" class="pt-3 border-t border-slate-100">
+                <div class="flex items-center justify-between mb-2">
+                  <span class="text-xs font-bold uppercase tracking-wider text-emerald-700 flex items-center space-x-1.5">
+                    <i class="ph-bold ph-check-circle"></i>
+                    <span>Payments List (Completed Settlements)</span>
+                  </span>
+                  <span id="paymentsCountBadge" class="text-[11px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800">0</span>
+                </div>
+                <div id="recordedPaymentsList" class="space-y-2">
+                  <!-- Populated by JS -->
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 2. ALL TRIP EXPENSES LIST -->
+          <div class="bg-white rounded-2xl border border-slate-200 card-shadow overflow-hidden">
+            <div class="px-5 sm:px-6 py-4 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3 bg-slate-50/60">
+              <div class="flex items-center space-x-2">
+                <div class="w-8 h-8 rounded-xl bg-indigo-100 text-indigo-700 flex items-center justify-center text-lg">
+                  <i class="ph-bold ph-receipt"></i>
+                </div>
+                <div>
+                  <h3 class="text-base font-extrabold text-slate-900">Trip Expenses</h3>
+                  <p class="text-xs text-slate-500">To change who shared a scanned bill, delete it and add it again by hand</p>
+                </div>
+              </div>
+
+              <button
+                onclick="exportExpensesCSV()"
+                class="text-xs font-bold px-3.5 py-2 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 transition flex items-center space-x-1.5 cursor-pointer"
+              >
+                <i class="ph-bold ph-file-csv text-sm text-emerald-600"></i>
+                <span>Export CSV</span>
+              </button>
+            </div>
+
+            <div id="expensesListContainer" class="divide-y divide-slate-100">
+              <!-- Populated by JS -->
+            </div>
+          </div>
+
+        </div>
+
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ===================================================================== -->
+  <!-- MODAL 1: PIN ENTRY MODAL TO OPEN A TRIP                               -->
+  <!-- ===================================================================== -->
+  <div id="pinModal" class="fixed inset-0 z-50 hidden bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl border border-slate-200 max-w-sm w-full p-6 shadow-xl space-y-5 animate-fade-in">
+      <div class="flex items-center justify-between">
+        <div class="flex items-center space-x-2.5">
+          <div class="w-10 h-10 rounded-xl bg-indigo-100 text-indigo-600 flex items-center justify-center text-xl">
+            <i class="ph-bold ph-lock-key"></i>
+          </div>
+          <div>
+            <h3 id="pinModalTripName" class="text-base font-extrabold text-slate-900">Enter Trip PIN</h3>
+            <p class="text-xs text-slate-500">Protected trip — enter PIN to open</p>
+          </div>
+        </div>
+        <button onclick="closePinModal()" class="text-slate-400 hover:text-slate-600 cursor-pointer">
+          <i class="ph-bold ph-x text-lg"></i>
+        </button>
+      </div>
+
+      <form onsubmit="submitPinModal(event)" class="space-y-4">
+        <div>
+          <label for="unlockPinInput" class="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5 text-center">
+            Trip PIN (Default is 0000)
+          </label>
+          <input
+            id="unlockPinInput"
+            type="password"
+            inputmode="numeric"
+            placeholder="••••"
+            required
+            class="w-full px-4 py-3 rounded-xl border border-slate-300 text-xl font-extrabold pin-input focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          >
+          <p id="pinModalError" class="hidden text-xs font-bold text-rose-600 text-center mt-2"></p>
+        </div>
+
+        <div class="flex space-x-2.5">
+          <button
+            type="button"
+            onclick="closePinModal()"
+            class="flex-1 py-2.5 px-4 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs transition cursor-pointer"
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            class="flex-1 py-2.5 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs shadow-sm transition cursor-pointer"
+          >
+            Unlock Trip
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ===================================================================== -->
+  <!-- MODAL 2: RECEIPT / BILL PHOTO VIEWER MODAL                            -->
+  <!-- ===================================================================== -->
+  <div id="receiptPreviewModal" class="fixed inset-0 z-50 hidden bg-slate-900/75 backdrop-blur-xs flex items-center justify-center p-4" onclick="closeReceiptPreviewModal()">
+    <div class="bg-white rounded-2xl max-w-lg w-full overflow-hidden shadow-2xl animate-fade-in" onclick="event.stopPropagation()">
+      <div class="px-5 py-3.5 border-b border-slate-200 flex items-center justify-between">
+        <h3 id="receiptPreviewTitle" class="text-sm font-bold text-slate-900 truncate">Bill Photo</h3>
+        <button onclick="closeReceiptPreviewModal()" class="text-slate-400 hover:text-slate-700 cursor-pointer">
+          <i class="ph-bold ph-x text-lg"></i>
+        </button>
+      </div>
+      <div class="p-4 bg-slate-900 flex items-center justify-center max-h-[75vh] overflow-auto">
+        <img id="receiptPreviewImage" src="" alt="Receipt" class="max-w-full max-h-[68vh] rounded-lg object-contain">
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================================================================== -->
+  <!-- MODAL 3: GEMINI AI API KEY SETTINGS MODAL                             -->
+  <!-- ===================================================================== -->
+  <div id="settingsModal" class="fixed inset-0 z-50 hidden bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl border border-slate-200 max-w-md w-full p-6 shadow-xl space-y-4 animate-fade-in">
+      <div class="flex items-center justify-between">
+        <div class="flex items-center space-x-2.5">
+          <div class="w-9 h-9 rounded-xl bg-violet-100 text-violet-600 flex items-center justify-center text-lg">
+            <i class="ph-bold ph-sparkle"></i>
+          </div>
+          <div>
+            <h3 class="text-base font-extrabold text-slate-900">AI Receipt Scanner Settings</h3>
+            <p class="text-xs text-slate-500">Google Gemini Vision &amp; PDF OCR</p>
+          </div>
+        </div>
+        <button onclick="closeSettingsModal()" class="text-slate-400 hover:text-slate-600 cursor-pointer">
+          <i class="ph-bold ph-x text-lg"></i>
+        </button>
+      </div>
+
+      <div class="space-y-3 text-xs text-slate-600">
+        <p>
+          TripSplit AI uses <strong>Google Gemini 2.0 Flash</strong> to read receipt photos and PDF invoices (extracting total, description, category, and date).
+        </p>
+        <div>
+          <label for="geminiApiKeyInput" class="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1">
+            Gemini API Key <span class="text-slate-400 font-normal">(Optional if set in server .env)</span>
+          </label>
+          <input
+            id="geminiApiKeyInput"
+            type="password"
+            placeholder="AIzaSy..."
+            class="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          >
+        </div>
+      </div>
+
+      <div class="flex justify-end space-x-2 pt-2">
+        <button onclick="closeSettingsModal()" class="px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs cursor-pointer">
+          Cancel
+        </button>
+        <button onclick="saveSettingsModal()" class="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs cursor-pointer">
+          Save Key
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
