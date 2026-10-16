@@ -31,6 +31,25 @@
 
       <!-- Right Controls -->
       <div class="flex items-center flex-wrap gap-2">
+        <!-- Visitor Counter Badge (Starts at 0) -->
+        <div
+          id="visitorCounterBadge"
+          class="text-xs font-bold flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-indigo-50 text-indigo-900 border border-indigo-200 shadow-xs"
+          title="Total Website Visitors (Starts at 0)"
+        >
+          <i class="ph-bold ph-eye text-indigo-600 text-sm"></i>
+          <span class="text-slate-600 font-semibold">Visitors:</span>
+          <span id="visitorCountValue" class="px-2 py-0.5 rounded-md bg-indigo-600 text-white font-extrabold tabular-nums">0</span>
+          <button
+            type="button"
+            onclick="resetVisitorCounter()"
+            class="text-indigo-400 hover:text-indigo-700 ml-0.5 transition cursor-pointer"
+            title="Reset visitor counter to 0"
+          >
+            <i class="ph-bold ph-arrow-counter-clockwise text-xs"></i>
+          </button>
+        </div>
+
         <!-- Yeh Dosti (Sholay) 20-Second Music Button -->
         <button
           id="yehDostiHeaderBtn"

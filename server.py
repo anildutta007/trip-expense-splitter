@@ -57,7 +57,10 @@ api_router = APIRouter()
 
 DATA_FILE = BASE_DIR / "data" / "trips.json"
 TMP_DATA_FILE = Path("/tmp/trips.json")
+VISITORS_FILE = BASE_DIR / "data" / "visitors.json"
+TMP_VISITORS_FILE = Path("/tmp/visitors.json")
 _in_memory_trips: Dict[str, Any] = {}
+_in_memory_visitors: Optional[Dict[str, Any]] = None
 
 VALID_CATEGORIES = [
     "Food & Drink",
@@ -147,6 +150,40 @@ def save_stored_trips(trips: Dict[str, Any]):
             print("Disk write skipped or failed (serverless environment):", e)
 
 
+def get_stored_visitors() -> Dict[str, Any]:
+    global _in_memory_visitors
+    if _in_memory_visitors is None:
+        for candidate in [TMP_VISITORS_FILE, VISITORS_FILE]:
+            try:
+                if candidate.exists():
+                    with open(candidate, "r", encoding="utf-8") as f:
+                        loaded = json.load(f)
+                        if isinstance(loaded, dict) and isinstance(loaded.get("count"), (int, float)):
+                            _in_memory_visitors = {
+                                "count": max(0, int(loaded["count"])),
+                                "initialized": bool(loaded.get("initialized", False))
+                            }
+                            break
+            except Exception:
+                pass
+        if _in_memory_visitors is None:
+            _in_memory_visitors = {"count": 0, "initialized": False}
+            save_stored_visitors(_in_memory_visitors)
+    return _in_memory_visitors
+
+
+def save_stored_visitors(state: Dict[str, Any]):
+    global _in_memory_visitors
+    _in_memory_visitors = state
+    for target in [VISITORS_FILE, TMP_VISITORS_FILE]:
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with open(target, "w", encoding="utf-8") as f:
+                json.dump(state, f, indent=2)
+        except Exception:
+            pass
+
+
 # ----------------- Pydantic Models -----------------
 
 class CreateTripRequest(BaseModel):
@@ -168,6 +205,10 @@ class SyncTripRequest(BaseModel):
     pin: Optional[str] = None
 
 
+class VisitorActionRequest(BaseModel):
+    action: Optional[str] = None
+
+
 # ----------------- API Endpoints -----------------
 
 @api_router.get("/status")
@@ -179,6 +220,34 @@ def get_status(x_gemini_key: Optional[str] = Header(None)):
         "has_server_key": bool(os.getenv("GEMINI_API_KEY", "").strip()),
         "sdk_installed": GENAI_AVAILABLE
     }
+
+
+@api_router.get("/visitors")
+def get_visitors():
+    v = get_stored_visitors()
+    return {"status": "success", "count": v["count"], "initialized": v["initialized"]}
+
+
+@api_router.post("/visitors")
+def record_visitor(req: Optional[VisitorActionRequest] = None):
+    v = get_stored_visitors()
+    if req and req.action == "reset":
+        v["count"] = 0
+        v["initialized"] = True
+    elif not v.get("initialized"):
+        v["count"] = 0
+        v["initialized"] = True
+    else:
+        v["count"] = int(v.get("count", 0)) + 1
+    save_stored_visitors(v)
+    return {"status": "success", "count": v["count"], "initialized": v["initialized"]}
+
+
+@api_router.delete("/visitors")
+def reset_visitors():
+    v = {"count": 0, "initialized": True}
+    save_stored_visitors(v)
+    return {"status": "success", "count": 0, "initialized": True}
 
 
 @api_router.get("/trips")

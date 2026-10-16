@@ -14,6 +14,7 @@
 const STORAGE_KEY_TRIPS = "tripsplit_ai_trips_v1";
 const STORAGE_KEY_ACTIVE_TRIP = "tripsplit_active_trip_id_v1";
 const STORAGE_KEY_DRAFT_TRIP = "tripsplit_draft_trip_v1";
+const STORAGE_KEY_VISITORS = "dosti_pakki_visitor_counter_v1";
 const STORAGE_KEY_GEMINI = "tripsplit_ai_gemini_key";
 const IDB_NAME = "DostiPakkiExpenseDB";
 const IDB_STORE = "trips_kv";
@@ -60,6 +61,7 @@ let yehDostiAutoUnlockBound = false;
 
 document.addEventListener("DOMContentLoaded", async () => {
   initDefaultDateInputs();
+  initVisitorCounter();
   restoreDraftTripState();
   bindDraftFormPersistence();
   renderDraftMembers();
@@ -100,6 +102,91 @@ function initDefaultDateInputs() {
   const today = new Date().toISOString().split("T")[0];
   const dateInput = document.getElementById("manualDate");
   if (dateInput) dateInput.value = today;
+}
+
+// ----------------- VISITOR COUNTER (STARTS AT ZERO) -----------------
+
+function renderVisitorCount(count) {
+  const el = document.getElementById("visitorCountValue");
+  if (el) {
+    el.textContent = String(Math.max(0, Math.floor(Number(count) || 0)));
+  }
+}
+
+async function initVisitorCounter() {
+  let localCount = 0;
+  let localInitialized = false;
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_VISITORS);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed.count === "number") {
+        localCount = Math.max(0, Math.floor(parsed.count));
+        localInitialized = Boolean(parsed.initialized);
+      }
+    }
+  } catch (_) {}
+
+  if (!localInitialized) {
+    localCount = 0;
+    localInitialized = true;
+  } else {
+    localCount += 1;
+  }
+
+  try {
+    localStorage.setItem(
+      STORAGE_KEY_VISITORS,
+      JSON.stringify({ count: localCount, initialized: true })
+    );
+  } catch (_) {}
+
+  renderVisitorCount(localCount);
+
+  for (const base of getApiBases()) {
+    try {
+      const res = await fetch(`${base}/api/visitors`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({})
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data && typeof data.count === "number") {
+          const bestCount = Math.max(localCount, Math.floor(data.count));
+          localCount = bestCount;
+          renderVisitorCount(bestCount);
+          try {
+            localStorage.setItem(
+              STORAGE_KEY_VISITORS,
+              JSON.stringify({ count: bestCount, initialized: true })
+            );
+          } catch (_) {}
+        }
+      }
+    } catch (_) {}
+  }
+}
+
+async function resetVisitorCounter() {
+  try {
+    localStorage.setItem(
+      STORAGE_KEY_VISITORS,
+      JSON.stringify({ count: 0, initialized: true })
+    );
+  } catch (_) {}
+  renderVisitorCount(0);
+
+  for (const base of getApiBases()) {
+    try {
+      await fetch(`${base}/api/visitors`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "reset" })
+      });
+    } catch (_) {}
+  }
+  showToast("Visitor counter reset to 0.", "info");
 }
 
 // ----------------- "YEH DOSTI HUM NAHI TODENGE" (SHOLAY) 20s MUSIC PLAYER -----------------

@@ -13,6 +13,7 @@ const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 8080;
 const PUBLIC_DIR = __dirname;
 const DATA_DIR = path.join(__dirname, 'data');
 const TRIPS_FILE = path.join(DATA_DIR, 'trips.json');
+const VISITORS_FILE = path.join(DATA_DIR, 'visitors.json');
 
 // Load .env from current or parent directory
 function loadEnvKey() {
@@ -141,6 +142,40 @@ function saveStoredTrips(trips) {
       fs.mkdirSync(DATA_DIR, { recursive: true });
     }
     fs.writeFileSync(TRIPS_FILE, JSON.stringify(trips, null, 2), 'utf8');
+  } catch (_) {}
+}
+
+let inMemoryVisitors = null;
+
+function getStoredVisitorState() {
+  if (!inMemoryVisitors) {
+    try {
+      if (fs.existsSync(VISITORS_FILE)) {
+        const raw = fs.readFileSync(VISITORS_FILE, 'utf8');
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed.count === 'number') {
+          inMemoryVisitors = {
+            count: Math.max(0, Math.floor(parsed.count)),
+            initialized: Boolean(parsed.initialized)
+          };
+        }
+      }
+    } catch (_) {}
+    if (!inMemoryVisitors) {
+      inMemoryVisitors = { count: 0, initialized: false };
+      saveStoredVisitorState(inMemoryVisitors);
+    }
+  }
+  return inMemoryVisitors;
+}
+
+function saveStoredVisitorState(state) {
+  inMemoryVisitors = state;
+  try {
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
+    fs.writeFileSync(VISITORS_FILE, JSON.stringify(state, null, 2), 'utf8');
   } catch (_) {}
 }
 
@@ -321,6 +356,37 @@ const server = http.createServer(async (req, res) => {
       has_server_key: Boolean(loadEnvKey()),
       sdk_installed: true
     });
+  }
+
+  if (reqUrl === '/api/visitors' && req.method === 'GET') {
+    const vState = getStoredVisitorState();
+    return sendJson(res, 200, { status: 'success', count: vState.count, initialized: vState.initialized });
+  }
+
+  if (reqUrl === '/api/visitors' && req.method === 'POST') {
+    try {
+      const body = await readJsonBody(req);
+      const vState = getStoredVisitorState();
+      if (body && body.action === 'reset') {
+        vState.count = 0;
+        vState.initialized = true;
+      } else if (!vState.initialized) {
+        vState.count = 0;
+        vState.initialized = true;
+      } else {
+        vState.count = (Number(vState.count) || 0) + 1;
+      }
+      saveStoredVisitorState(vState);
+      return sendJson(res, 200, { status: 'success', count: vState.count, initialized: vState.initialized });
+    } catch (e) {
+      return sendJson(res, 400, { detail: String(e) });
+    }
+  }
+
+  if (reqUrl === '/api/visitors' && req.method === 'DELETE') {
+    const vState = { count: 0, initialized: true };
+    saveStoredVisitorState(vState);
+    return sendJson(res, 200, { status: 'success', count: 0, initialized: true });
   }
 
   if (reqUrl === '/api/trips' && req.method === 'GET') {
